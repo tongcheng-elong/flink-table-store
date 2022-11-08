@@ -111,8 +111,20 @@ under the License.
             <version>${flink.version}</version>
             <exclusions>
                 <exclusion>
-                    <groupId>*</groupId>
-                    <artifactId>*</artifactId>
+                    <artifactId>flink-core</artifactId>
+                    <groupId>org.apache.flink</groupId>
+                </exclusion>
+                <exclusion>
+                    <artifactId>flink-shaded-force-shading</artifactId>
+                    <groupId>org.apache.flink</groupId>
+                </exclusion>
+                <exclusion>
+                    <artifactId>jsr305</artifactId>
+                    <groupId>com.google.code.findbugs</groupId>
+                </exclusion>
+                <exclusion>
+                    <artifactId>slf4j-api</artifactId>
+                    <groupId>org.slf4j</groupId>
                 </exclusion>
             </exclusions>
         </dependency>
@@ -165,8 +177,12 @@ under the License.
             <version>${flink.version}</version>
             <exclusions>
                 <exclusion>
-                    <groupId>*</groupId>
-                    <artifactId>*</artifactId>
+                    <artifactId>flink-shaded-force-shading</artifactId>
+                    <groupId>org.apache.flink</groupId>
+                </exclusion>
+                <exclusion>
+                    <artifactId>flink-file-sink-common</artifactId>
+                    <groupId>org.apache.flink</groupId>
                 </exclusion>
             </exclusions>
         </dependency>
@@ -237,6 +253,7 @@ under the License.
                                     <include>org.apache.flink:flink-core</include>
                                     <include>org.apache.flink:flink-runtime</include>
                                     <include>org.apache.flink:${flink.streaming.java}</include>
+                                    <include>org.apache.flink:flink-connector-base</include>
                                     <include>org.apache.flink:flink-connector-files</include>
                                     <include>org.apache.flink:flink-hadoop-fs</include>
                                     <include>org.apache.flink:flink-shaded-jackson</include>
@@ -248,6 +265,7 @@ under the License.
                                     <include>org.apache.flink:flink-table-common</include>
                                     <include>org.apache.flink:flink-table-api-java</include>
                                     <include>org.apache.flink:${flink.table.runtime}</include>
+                                    <include>org.apache.flink:flink-table-code-splitter</include>
 
                                     <!-- Flink Table Store -->
                                     <include>org.apache.flink:flink-table-store-common</include>
