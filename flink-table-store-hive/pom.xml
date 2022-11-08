@@ -64,6 +64,14 @@ under the License.
         </profile>
 
         <profile>
+            <id>hive-2.3</id>
+            <properties>
+                <hive.main.version>2</hive.main.version>
+                <hive.version>2.3.7</hive.version>
+            </properties>
+        </profile>
+
+        <profile>
             <id>hive-2.1-cdh-6.3</id>
             <properties>
                 <hive.main.version>2</hive.main.version>
