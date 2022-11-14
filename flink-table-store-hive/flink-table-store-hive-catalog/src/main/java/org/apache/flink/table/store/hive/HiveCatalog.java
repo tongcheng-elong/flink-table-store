@@ -82,6 +82,16 @@ public class HiveCatalog extends AbstractCatalog {
     }
 
     @Override
+    public Path getTableLocation(ObjectPath tablePath) {
+        try {
+            Table table = client.getTable(tablePath.getDatabaseName(), tablePath.getObjectName());
+            return new Path(table.getSd().getLocation());
+        } catch (TException e) {
+            throw new RuntimeException("Failed to get table location", e);
+        }
+    }
+
+    @Override
     public Optional<CatalogLock.Factory> lockFactory() {
         return lockEnabled()
                 ? Optional.of(HiveCatalogLock.createFactory(hiveConf))
@@ -218,7 +228,10 @@ public class HiveCatalog extends AbstractCatalog {
         // if changes on Hive fails there is no harm to perform the same changes to files again
         TableSchema schema;
         try {
-            schema = schemaManager(tablePath).commitNewVersion(updateSchema);
+            schema =
+                    new SchemaManager(super.getTableLocation(tablePath))
+                            .withLock(lock(tablePath))
+                            .commitNewVersion(updateSchema);
         } catch (Exception e) {
             throw new RuntimeException(
                     "Failed to commit changes of table "
@@ -315,7 +328,7 @@ public class HiveCatalog extends AbstractCatalog {
                 schema.fields().stream()
                         .map(this::convertToFieldSchema)
                         .collect(Collectors.toList()));
-        sd.setLocation(getTableLocation(tablePath).toString());
+        sd.setLocation(super.getTableLocation(tablePath).toString());
 
         sd.setInputFormat(INPUT_FORMAT_CLASS_NAME);
         sd.setOutputFormat(OUTPUT_FORMAT_CLASS_NAME);
