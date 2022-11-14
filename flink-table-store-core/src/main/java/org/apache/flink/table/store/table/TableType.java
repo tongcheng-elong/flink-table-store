@@ -18,8 +18,31 @@
 
 package org.apache.flink.table.store.table;
 
+import org.apache.flink.configuration.DescribedEnum;
+import org.apache.flink.configuration.description.InlineElement;
+
+import static org.apache.flink.configuration.description.TextElement.text;
+
 /** Enum of catalog table type. */
-public enum TableType {
-    MANAGED_TABLE,
-    EXTERNAL_TABLE
+public enum TableType implements DescribedEnum {
+    MANAGED("MANAGED_TABLE", "Table Store owned table where the entire lifecycle of the table data is managed."),
+    EXTERNAL("EXTERNAL_TABLE", "The table where Table Store has loose coupling with the data stored in external locations.");
+
+    private final String value;
+    private final String description;
+
+    TableType(String value, String description) {
+        this.value = value;
+        this.description = description;
+    }
+
+    @Override
+    public String toString() {
+        return value;
+    }
+
+    @Override
+    public InlineElement getDescription() {
+        return text(description);
+    }
 }
