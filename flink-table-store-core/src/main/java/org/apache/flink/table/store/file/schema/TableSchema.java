@@ -20,10 +20,17 @@ package org.apache.flink.table.store.file.schema;
 
 import org.apache.flink.table.store.file.utils.JsonSerdeUtil;
 import org.apache.flink.table.types.logical.ArrayType;
+import org.apache.flink.table.types.logical.DistinctType;
+import org.apache.flink.table.types.logical.LegacyTypeInformationType;
 import org.apache.flink.table.types.logical.LogicalType;
 import org.apache.flink.table.types.logical.MapType;
 import org.apache.flink.table.types.logical.MultisetType;
+import org.apache.flink.table.types.logical.NullType;
 import org.apache.flink.table.types.logical.RowType;
+import org.apache.flink.table.types.logical.StructuredType;
+import org.apache.flink.table.types.logical.SymbolType;
+import org.apache.flink.table.types.logical.UnresolvedUserDefinedType;
+import org.apache.flink.table.types.logical.UserDefinedType;
 import org.apache.flink.util.Preconditions;
 import org.apache.flink.util.StringUtils;
 
@@ -195,20 +202,25 @@ public class TableSchema implements Serializable {
         return projectedLogicalRowType(trimmedPrimaryKeys());
     }
 
+    public List<DataField> trimmedPrimaryKeysFields() {
+        return projectedDataFields(trimmedPrimaryKeys());
+    }
+
     public int[] projection(List<String> projectedFieldNames) {
         List<String> fieldNames = fieldNames();
         return projectedFieldNames.stream().mapToInt(fieldNames::indexOf).toArray();
     }
 
-    private RowType projectedLogicalRowType(List<String> projectedFieldNames) {
+    private List<DataField> projectedDataFields(List<String> projectedFieldNames) {
         List<String> fieldNames = fieldNames();
+        return projectedFieldNames.stream()
+                .map(k -> fields.get(fieldNames.indexOf(k)))
+                .collect(Collectors.toList());
+    }
+
+    private RowType projectedLogicalRowType(List<String> projectedFieldNames) {
         return (RowType)
-                new RowDataType(
-                                false,
-                                projectedFieldNames.stream()
-                                        .map(k -> fields.get(fieldNames.indexOf(k)))
-                                        .collect(Collectors.toList()))
-                        .logicalType;
+                new RowDataType(false, projectedDataFields(projectedFieldNames)).logicalType;
     }
 
     public TableSchema copy(Map<String, String> newOptions) {
@@ -306,4 +318,18 @@ public class TableSchema implements Serializable {
             }
         }
     }
+
+    public static final List<Class<? extends LogicalType>> PRIMARY_KEY_UNSUPPORTED_LOGICAL_TYPES =
+            Arrays.asList(
+                    MapType.class,
+                    ArrayType.class,
+                    RowType.class,
+                    UserDefinedType.class,
+                    DistinctType.class,
+                    StructuredType.class,
+                    MultisetType.class,
+                    NullType.class,
+                    LegacyTypeInformationType.class,
+                    SymbolType.class,
+                    UnresolvedUserDefinedType.class);
 }
