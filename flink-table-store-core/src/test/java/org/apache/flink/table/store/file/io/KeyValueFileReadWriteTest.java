@@ -18,7 +18,6 @@
 
 package org.apache.flink.table.store.file.io;
 
-import org.apache.flink.connector.file.table.FileSystemConnectorOptions;
 import org.apache.flink.core.fs.FileStatus;
 import org.apache.flink.core.fs.FileSystem;
 import org.apache.flink.core.fs.Path;
@@ -235,11 +234,7 @@ public class KeyValueFileReadWriteTest {
 
     protected KeyValueFileWriterFactory createWriterFactory(String path, String format) {
         FileStorePathFactory pathFactory =
-                new FileStorePathFactory(
-                        new Path(path),
-                        RowType.of(),
-                        FileSystemConnectorOptions.PARTITION_DEFAULT_NAME.defaultValue(),
-                        format);
+                new FileStorePathFactory(new Path(path), RowType.of(), "", format);
         int suggestedFileSize = ThreadLocalRandom.current().nextInt(8192) + 1024;
         return KeyValueFileWriterFactory.builder(
                         0,
