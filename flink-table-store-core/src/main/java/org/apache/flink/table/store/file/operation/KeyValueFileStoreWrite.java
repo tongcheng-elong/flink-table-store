@@ -18,6 +18,7 @@
 
 package org.apache.flink.table.store.file.operation;
 
+import org.apache.flink.core.fs.FileSystemKind;
 import org.apache.flink.table.data.RowData;
 import org.apache.flink.table.data.binary.BinaryRowData;
 import org.apache.flink.table.store.CoreOptions;
@@ -32,7 +33,7 @@ import org.apache.flink.table.store.file.mergetree.MergeTreeWriter;
 import org.apache.flink.table.store.file.mergetree.compact.CompactRewriter;
 import org.apache.flink.table.store.file.mergetree.compact.CompactStrategy;
 import org.apache.flink.table.store.file.mergetree.compact.FullChangelogMergeTreeCompactRewriter;
-import org.apache.flink.table.store.file.mergetree.compact.MergeFunction;
+import org.apache.flink.table.store.file.mergetree.compact.MergeFunctionFactory;
 import org.apache.flink.table.store.file.mergetree.compact.MergeTreeCompactManager;
 import org.apache.flink.table.store.file.mergetree.compact.MergeTreeCompactRewriter;
 import org.apache.flink.table.store.file.mergetree.compact.UniversalCompaction;
@@ -45,6 +46,8 @@ import org.apache.flink.table.types.logical.RowType;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
@@ -61,8 +64,9 @@ public class KeyValueFileStoreWrite extends MemoryFileStoreWrite<KeyValue> {
     private final KeyValueFileReaderFactory.Builder readerFactoryBuilder;
     private final KeyValueFileWriterFactory.Builder writerFactoryBuilder;
     private final Supplier<Comparator<RowData>> keyComparatorSupplier;
-    private final MergeFunction<KeyValue> mergeFunction;
+    private final MergeFunctionFactory<KeyValue> mfFactory;
     private final CoreOptions options;
+    private final FileStorePathFactory pathFactory;
 
     public KeyValueFileStoreWrite(
             SchemaManager schemaManager,
@@ -71,7 +75,7 @@ public class KeyValueFileStoreWrite extends MemoryFileStoreWrite<KeyValue> {
             RowType keyType,
             RowType valueType,
             Supplier<Comparator<RowData>> keyComparatorSupplier,
-            MergeFunction<KeyValue> mergeFunction,
+            MergeFunctionFactory<KeyValue> mfFactory,
             FileStorePathFactory pathFactory,
             SnapshotManager snapshotManager,
             FileStoreScan scan,
@@ -94,8 +98,9 @@ public class KeyValueFileStoreWrite extends MemoryFileStoreWrite<KeyValue> {
                         pathFactory,
                         options.targetFileSize());
         this.keyComparatorSupplier = keyComparatorSupplier;
-        this.mergeFunction = mergeFunction;
+        this.mfFactory = mfFactory;
         this.options = options;
+        this.pathFactory = pathFactory;
     }
 
     @Override
@@ -140,16 +145,25 @@ public class KeyValueFileStoreWrite extends MemoryFileStoreWrite<KeyValue> {
                         compactExecutor,
                         levels);
         return new MergeTreeWriter(
-                options.writeBufferSpillable(),
+                bufferSpillable(),
                 options.localSortMaxNumFileHandles(),
                 ioManager,
                 compactManager,
                 getMaxSequenceNumber(restoreFiles),
                 keyComparator,
-                mergeFunction.copy(),
+                mfFactory.create(),
                 writerFactory,
                 options.commitForceCompact(),
                 options.changelogProducer());
+    }
+
+    private boolean bufferSpillable() {
+        try {
+            return options.writeBufferSpillable(
+                    pathFactory.root().getFileSystem().getKind() != FileSystemKind.FILE_SYSTEM);
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
     }
 
     private CompactManager createCompactManager(
@@ -185,10 +199,10 @@ public class KeyValueFileStoreWrite extends MemoryFileStoreWrite<KeyValue> {
                     readerFactory,
                     writerFactory,
                     keyComparator,
-                    mergeFunction);
+                    mfFactory);
         } else {
             return new MergeTreeCompactRewriter(
-                    readerFactory, writerFactory, keyComparator, mergeFunction);
+                    readerFactory, writerFactory, keyComparator, mfFactory);
         }
     }
 }

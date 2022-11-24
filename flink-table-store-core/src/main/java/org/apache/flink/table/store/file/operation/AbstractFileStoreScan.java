@@ -62,6 +62,7 @@ public abstract class AbstractFileStoreScan implements FileStoreScan {
     private final int numOfBuckets;
     private final boolean checkNumOfBuckets;
     private final CoreOptions.ChangelogProducer changelogProducer;
+    private final boolean readCompacted;
 
     private final Map<Long, TableSchema> tableSchemas;
     private final SchemaManager schemaManager;
@@ -86,7 +87,8 @@ public abstract class AbstractFileStoreScan implements FileStoreScan {
             ManifestList.Factory manifestListFactory,
             int numOfBuckets,
             boolean checkNumOfBuckets,
-            CoreOptions.ChangelogProducer changelogProducer) {
+            CoreOptions.ChangelogProducer changelogProducer,
+            boolean readCompacted) {
         this.partitionStatsConverter = new FieldStatsArraySerializer(partitionType);
         this.partitionConverter = new RowDataToObjectArrayConverter(partitionType);
         Preconditions.checkArgument(
@@ -100,6 +102,7 @@ public abstract class AbstractFileStoreScan implements FileStoreScan {
         this.numOfBuckets = numOfBuckets;
         this.checkNumOfBuckets = checkNumOfBuckets;
         this.changelogProducer = changelogProducer;
+        this.readCompacted = readCompacted;
         this.tableSchemas = new HashMap<>();
     }
 
@@ -181,7 +184,10 @@ public abstract class AbstractFileStoreScan implements FileStoreScan {
         Long snapshotId = specifiedSnapshotId;
         if (manifests == null) {
             if (snapshotId == null) {
-                snapshotId = snapshotManager.latestSnapshotId();
+                snapshotId =
+                        readCompacted
+                                ? snapshotManager.latestCompactedSnapshotId()
+                                : snapshotManager.latestSnapshotId();
             }
             if (snapshotId == null) {
                 manifests = Collections.emptyList();
