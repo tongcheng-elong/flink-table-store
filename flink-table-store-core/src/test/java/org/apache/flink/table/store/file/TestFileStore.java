@@ -31,14 +31,15 @@ import org.apache.flink.table.store.file.manifest.ManifestFileMeta;
 import org.apache.flink.table.store.file.manifest.ManifestList;
 import org.apache.flink.table.store.file.memory.HeapMemorySegmentPool;
 import org.apache.flink.table.store.file.memory.MemoryOwner;
-import org.apache.flink.table.store.file.mergetree.compact.MergeFunction;
+import org.apache.flink.table.store.file.mergetree.compact.MergeFunctionFactory;
 import org.apache.flink.table.store.file.operation.AbstractFileStoreWrite;
 import org.apache.flink.table.store.file.operation.FileStoreCommit;
 import org.apache.flink.table.store.file.operation.FileStoreCommitImpl;
 import org.apache.flink.table.store.file.operation.FileStoreExpireImpl;
 import org.apache.flink.table.store.file.operation.FileStoreRead;
 import org.apache.flink.table.store.file.operation.FileStoreScan;
-import org.apache.flink.table.store.file.schema.KeyFieldsExtractor;
+import org.apache.flink.table.store.file.operation.ScanKind;
+import org.apache.flink.table.store.file.schema.KeyValueFieldsExtractor;
 import org.apache.flink.table.store.file.schema.SchemaManager;
 import org.apache.flink.table.store.file.utils.FileStorePathFactory;
 import org.apache.flink.table.store.file.utils.RecordReaderIterator;
@@ -93,8 +94,8 @@ public class TestFileStore extends KeyValueFileStore {
             RowType partitionType,
             RowType keyType,
             RowType valueType,
-            KeyFieldsExtractor keyFieldsExtractor,
-            MergeFunction<KeyValue> mergeFunction) {
+            KeyValueFieldsExtractor keyValueFieldsExtractor,
+            MergeFunctionFactory<KeyValue> mfFactory) {
         super(
                 new SchemaManager(options.path()),
                 0L,
@@ -103,8 +104,8 @@ public class TestFileStore extends KeyValueFileStore {
                 keyType,
                 keyType,
                 valueType,
-                keyFieldsExtractor,
-                p -> mergeFunction);
+                keyValueFieldsExtractor,
+                mfFactory);
         this.root = root;
         this.keySerializer = new RowDataSerializer(keyType);
         this.valueSerializer = new RowDataSerializer(valueType);
@@ -270,7 +271,15 @@ public class TestFileStore extends KeyValueFileStore {
                 snapshotId <= endInclusive;
                 snapshotId++) {
             List<ManifestEntry> entries =
-                    newScan().withIncremental(true).withSnapshot(snapshotId).plan().files();
+                    newScan()
+                            .withKind(
+                                    options.changelogProducer()
+                                                    == CoreOptions.ChangelogProducer.NONE
+                                            ? ScanKind.DELTA
+                                            : ScanKind.CHANGELOG)
+                            .withSnapshot(snapshotId)
+                            .plan()
+                            .files();
             result.addAll(readKvsFromManifestEntries(entries, true));
         }
         return result;
@@ -456,8 +465,8 @@ public class TestFileStore extends KeyValueFileStore {
         private final RowType partitionType;
         private final RowType keyType;
         private final RowType valueType;
-        private final KeyFieldsExtractor keyFieldsExtractor;
-        private final MergeFunction<KeyValue> mergeFunction;
+        private final KeyValueFieldsExtractor keyValueFieldsExtractor;
+        private final MergeFunctionFactory<KeyValue> mfFactory;
 
         private CoreOptions.ChangelogProducer changelogProducer;
 
@@ -468,16 +477,16 @@ public class TestFileStore extends KeyValueFileStore {
                 RowType partitionType,
                 RowType keyType,
                 RowType valueType,
-                KeyFieldsExtractor keyFieldsExtractor,
-                MergeFunction<KeyValue> mergeFunction) {
+                KeyValueFieldsExtractor keyValueFieldsExtractor,
+                MergeFunctionFactory<KeyValue> mfFactory) {
             this.format = format;
             this.root = root;
             this.numBuckets = numBuckets;
             this.partitionType = partitionType;
             this.keyType = keyType;
             this.valueType = valueType;
-            this.keyFieldsExtractor = keyFieldsExtractor;
-            this.mergeFunction = mergeFunction;
+            this.keyValueFieldsExtractor = keyValueFieldsExtractor;
+            this.mfFactory = mfFactory;
 
             this.changelogProducer = CoreOptions.ChangelogProducer.NONE;
         }
@@ -511,8 +520,8 @@ public class TestFileStore extends KeyValueFileStore {
                     partitionType,
                     keyType,
                     valueType,
-                    keyFieldsExtractor,
-                    mergeFunction);
+                    keyValueFieldsExtractor,
+                    mfFactory);
         }
     }
 }

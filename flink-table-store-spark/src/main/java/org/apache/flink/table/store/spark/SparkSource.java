@@ -19,10 +19,13 @@
 package org.apache.flink.table.store.spark;
 
 import org.apache.flink.configuration.Configuration;
+import org.apache.flink.core.fs.FileSystem;
+import org.apache.flink.core.plugin.PluginUtils;
+import org.apache.flink.table.store.file.operation.Lock;
 import org.apache.flink.table.store.table.FileStoreTableFactory;
 
+import org.apache.spark.sql.connector.catalog.SessionConfigSupport;
 import org.apache.spark.sql.connector.catalog.Table;
-import org.apache.spark.sql.connector.catalog.TableProvider;
 import org.apache.spark.sql.connector.expressions.Transform;
 import org.apache.spark.sql.sources.DataSourceRegister;
 import org.apache.spark.sql.types.StructType;
@@ -31,12 +34,14 @@ import org.apache.spark.sql.util.CaseInsensitiveStringMap;
 import java.util.Map;
 
 /** The spark source for table store. */
-public class SparkSource implements DataSourceRegister, TableProvider {
+public class SparkSource implements DataSourceRegister, SessionConfigSupport {
+
+    /** Not use 'table-store' here, the '-' is not allowed in SQL. */
+    private static final String SHORT_NAME = "tablestore";
 
     @Override
     public String shortName() {
-        // Not use 'table-store' here, the '-' is not allowed in SQL
-        return "tablestore";
+        return SHORT_NAME;
     }
 
     @Override
@@ -61,6 +66,16 @@ public class SparkSource implements DataSourceRegister, TableProvider {
     @Override
     public Table getTable(
             StructType schema, Transform[] partitioning, Map<String, String> options) {
-        return new SparkTable(FileStoreTableFactory.create(Configuration.fromMap(options)));
+        Configuration configuration =
+                Configuration.fromMap(SparkCaseSensitiveConverter.convert(options));
+        FileSystem.initialize(
+                configuration, PluginUtils.createPluginManagerFromRootFolder(configuration));
+        return new SparkTable(
+                FileStoreTableFactory.create(Configuration.fromMap(options)), Lock.emptyFactory());
+    }
+
+    @Override
+    public String keyPrefix() {
+        return SHORT_NAME;
     }
 }

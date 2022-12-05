@@ -19,6 +19,7 @@
 package org.apache.flink.table.store.file.operation;
 
 import org.apache.flink.core.fs.Path;
+import org.apache.flink.table.api.DataTypes;
 import org.apache.flink.table.data.GenericRowData;
 import org.apache.flink.table.data.binary.BinaryRowData;
 import org.apache.flink.table.runtime.typeutils.RowDataSerializer;
@@ -27,10 +28,11 @@ import org.apache.flink.table.store.file.TestFileStore;
 import org.apache.flink.table.store.file.TestKeyValueGenerator;
 import org.apache.flink.table.store.file.manifest.ManifestEntry;
 import org.apache.flink.table.store.file.mergetree.compact.DeduplicateMergeFunction;
-import org.apache.flink.table.store.file.mergetree.compact.MergeFunction;
+import org.apache.flink.table.store.file.mergetree.compact.MergeFunctionFactory;
 import org.apache.flink.table.store.file.mergetree.compact.ValueCountMergeFunction;
+import org.apache.flink.table.store.file.schema.AtomicDataType;
 import org.apache.flink.table.store.file.schema.DataField;
-import org.apache.flink.table.store.file.schema.KeyFieldsExtractor;
+import org.apache.flink.table.store.file.schema.KeyValueFieldsExtractor;
 import org.apache.flink.table.store.file.schema.SchemaManager;
 import org.apache.flink.table.store.file.schema.TableSchema;
 import org.apache.flink.table.store.file.schema.UpdateSchema;
@@ -112,7 +114,7 @@ public class KeyValueFileStoreReadTest {
                         partitionType,
                         keyType,
                         valueType,
-                        new KeyFieldsExtractor() {
+                        new KeyValueFieldsExtractor() {
                             private static final long serialVersionUID = 1L;
 
                             @Override
@@ -121,8 +123,18 @@ public class KeyValueFileStoreReadTest {
                                         .filter(f -> keyNames.contains(f.name()))
                                         .collect(Collectors.toList());
                             }
+
+                            @Override
+                            public List<DataField> valueFields(TableSchema schema) {
+                                return Collections.singletonList(
+                                        new DataField(
+                                                0,
+                                                "count",
+                                                new AtomicDataType(
+                                                        DataTypes.BIGINT().getLogicalType())));
+                            }
                         },
-                        ValueCountMergeFunction.factory().create());
+                        ValueCountMergeFunction.factory());
         List<KeyValue> readData =
                 writeThenRead(
                         data,
@@ -161,8 +173,8 @@ public class KeyValueFileStoreReadTest {
                         TestKeyValueGenerator.DEFAULT_PART_TYPE,
                         TestKeyValueGenerator.KEY_TYPE,
                         TestKeyValueGenerator.DEFAULT_ROW_TYPE,
-                        TestKeyValueGenerator.TestKeyFieldsExtractor.EXTRACTOR,
-                        DeduplicateMergeFunction.factory().create());
+                        TestKeyValueGenerator.TestKeyValueFieldsExtractor.EXTRACTOR,
+                        DeduplicateMergeFunction.factory());
 
         RowDataSerializer projectedValueSerializer =
                 new RowDataSerializer(
@@ -250,11 +262,11 @@ public class KeyValueFileStoreReadTest {
             RowType partitionType,
             RowType keyType,
             RowType valueType,
-            KeyFieldsExtractor extractor,
-            MergeFunction<KeyValue> mergeFunction)
+            KeyValueFieldsExtractor extractor,
+            MergeFunctionFactory<KeyValue> mfFactory)
             throws Exception {
         SchemaManager schemaManager = new SchemaManager(new Path(tempDir.toUri()));
-        boolean valueCountMode = mergeFunction instanceof ValueCountMergeFunction;
+        boolean valueCountMode = mfFactory.create() instanceof ValueCountMergeFunction;
         schemaManager.commitNewVersion(
                 new UpdateSchema(
                         valueCountMode ? keyType : valueType,
@@ -276,7 +288,7 @@ public class KeyValueFileStoreReadTest {
                         keyType,
                         valueType,
                         extractor,
-                        mergeFunction)
+                        mfFactory)
                 .build();
     }
 }

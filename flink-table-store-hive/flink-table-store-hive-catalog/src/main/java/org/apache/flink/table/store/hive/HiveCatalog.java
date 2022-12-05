@@ -160,7 +160,6 @@ public class HiveCatalog extends AbstractCatalog {
     public List<String> listTables(String databaseName) throws DatabaseNotExistException {
         try {
             return client.getAllTables(databaseName).stream()
-                    .parallel()
                     .filter(
                             tableName ->
                                     tableStoreTableExists(
@@ -389,7 +388,7 @@ public class HiveCatalog extends AbstractCatalog {
 
     private Lock lock(ObjectPath tablePath) {
         if (!lockEnabled()) {
-            return null;
+            return new Lock.EmptyLock();
         }
 
         HiveCatalogLock lock =

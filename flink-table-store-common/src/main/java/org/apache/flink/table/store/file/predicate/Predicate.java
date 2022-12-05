@@ -43,4 +43,6 @@ public interface Predicate extends Serializable {
 
     /** @return the negation predicate of this predicate if possible. */
     Optional<Predicate> negate();
+
+    <T> T visit(PredicateVisitor<T> visitor);
 }

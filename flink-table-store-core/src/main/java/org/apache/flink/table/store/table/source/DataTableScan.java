@@ -22,7 +22,9 @@ import org.apache.flink.annotation.VisibleForTesting;
 import org.apache.flink.table.data.binary.BinaryRowData;
 import org.apache.flink.table.store.CoreOptions;
 import org.apache.flink.table.store.file.io.DataFileMeta;
+import org.apache.flink.table.store.file.manifest.FileKind;
 import org.apache.flink.table.store.file.operation.FileStoreScan;
+import org.apache.flink.table.store.file.operation.ScanKind;
 import org.apache.flink.table.store.file.predicate.Predicate;
 import org.apache.flink.table.store.file.predicate.PredicateBuilder;
 import org.apache.flink.table.store.file.schema.TableSchema;
@@ -46,7 +48,7 @@ public abstract class DataTableScan implements TableScan {
     private final FileStorePathFactory pathFactory;
     private final CoreOptions options;
 
-    private boolean isIncremental = false;
+    private ScanKind scanKind = ScanKind.ALL;
 
     protected DataTableScan(
             FileStoreScan scan,
@@ -92,9 +94,9 @@ public abstract class DataTableScan implements TableScan {
         return this;
     }
 
-    public DataTableScan withIncremental(boolean isIncremental) {
-        this.isIncremental = isIncremental;
-        scan.withIncremental(isIncremental);
+    public DataTableScan withKind(ScanKind scanKind) {
+        this.scanKind = scanKind;
+        scan.withKind(scanKind);
         return this;
     }
 
@@ -112,12 +114,14 @@ public abstract class DataTableScan implements TableScan {
     @Override
     public DataFilePlan plan() {
         FileStoreScan.Plan plan = scan.plan();
-        return new DataFilePlan(plan.snapshotId(), generateSplits(plan.groupByPartFiles()));
+        return new DataFilePlan(
+                plan.snapshotId(), generateSplits(plan.groupByPartFiles(plan.files(FileKind.ADD))));
     }
 
     private List<DataSplit> generateSplits(
             Map<BinaryRowData, Map<Integer, List<DataFileMeta>>> groupedDataFiles) {
-        return generateSplits(isIncremental, splitGenerator(pathFactory), groupedDataFiles);
+        return generateSplits(
+                scanKind != ScanKind.ALL, splitGenerator(pathFactory), groupedDataFiles);
     }
 
     @VisibleForTesting
@@ -169,6 +173,7 @@ public abstract class DataTableScan implements TableScan {
             this.splits = splits;
         }
 
+        @SuppressWarnings({"unchecked", "rawtypes"})
         @Override
         public List<Split> splits() {
             return (List) splits;

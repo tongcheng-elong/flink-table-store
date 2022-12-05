@@ -20,7 +20,6 @@ package org.apache.flink.table.store.file.operation;
 
 import org.apache.flink.table.api.TableException;
 import org.apache.flink.table.data.binary.BinaryRowData;
-import org.apache.flink.table.store.CoreOptions;
 import org.apache.flink.table.store.file.Snapshot;
 import org.apache.flink.table.store.file.manifest.ManifestEntry;
 import org.apache.flink.table.store.file.manifest.ManifestFile;
@@ -43,9 +42,9 @@ import javax.annotation.Nullable;
 
 import java.util.ArrayList;
 import java.util.Collections;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.ExecutionException;
 import java.util.function.Function;
 import java.util.stream.Collectors;
@@ -61,10 +60,9 @@ public abstract class AbstractFileStoreScan implements FileStoreScan {
     private final ManifestList manifestList;
     private final int numOfBuckets;
     private final boolean checkNumOfBuckets;
-    private final CoreOptions.ChangelogProducer changelogProducer;
     private final boolean readCompacted;
 
-    private final Map<Long, TableSchema> tableSchemas;
+    private final ConcurrentMap<Long, TableSchema> tableSchemas;
     private final SchemaManager schemaManager;
     private final long schemaId;
 
@@ -74,7 +72,7 @@ public abstract class AbstractFileStoreScan implements FileStoreScan {
     private Long specifiedSnapshotId = null;
     private Integer specifiedBucket = null;
     private List<ManifestFileMeta> specifiedManifests = null;
-    private boolean isIncremental = false;
+    private ScanKind scanKind = ScanKind.ALL;
     private Integer specifiedLevel = null;
 
     public AbstractFileStoreScan(
@@ -87,7 +85,6 @@ public abstract class AbstractFileStoreScan implements FileStoreScan {
             ManifestList.Factory manifestListFactory,
             int numOfBuckets,
             boolean checkNumOfBuckets,
-            CoreOptions.ChangelogProducer changelogProducer,
             boolean readCompacted) {
         this.partitionStatsConverter = new FieldStatsArraySerializer(partitionType);
         this.partitionConverter = new RowDataToObjectArrayConverter(partitionType);
@@ -101,9 +98,8 @@ public abstract class AbstractFileStoreScan implements FileStoreScan {
         this.manifestList = manifestListFactory.create();
         this.numOfBuckets = numOfBuckets;
         this.checkNumOfBuckets = checkNumOfBuckets;
-        this.changelogProducer = changelogProducer;
         this.readCompacted = readCompacted;
-        this.tableSchemas = new HashMap<>();
+        this.tableSchemas = new ConcurrentHashMap<>();
     }
 
     @Override
@@ -167,8 +163,8 @@ public abstract class AbstractFileStoreScan implements FileStoreScan {
     }
 
     @Override
-    public FileStoreScan withIncremental(boolean isIncremental) {
-        this.isIncremental = isIncremental;
+    public FileStoreScan withKind(ScanKind scanKind) {
+        this.scanKind = scanKind;
         return this;
     }
 
@@ -193,10 +189,7 @@ public abstract class AbstractFileStoreScan implements FileStoreScan {
                 manifests = Collections.emptyList();
             } else {
                 Snapshot snapshot = snapshotManager.snapshot(snapshotId);
-                manifests =
-                        isIncremental
-                                ? readIncremental(snapshot)
-                                : snapshot.readAllDataManifests(manifestList);
+                manifests = readManiests(snapshot);
             }
         }
 
@@ -221,7 +214,7 @@ public abstract class AbstractFileStoreScan implements FileStoreScan {
         }
 
         List<ManifestEntry> files = new ArrayList<>();
-        for (ManifestEntry file : ManifestEntry.mergeManifestEntries(entries)) {
+        for (ManifestEntry file : ManifestEntry.mergeEntries(entries)) {
             if (checkNumOfBuckets && file.totalBuckets() != numOfBuckets) {
                 String partInfo =
                         partitionConverter.getArity() > 0
@@ -263,52 +256,13 @@ public abstract class AbstractFileStoreScan implements FileStoreScan {
         };
     }
 
-    protected TableSchema scanTableSchema() {
-        return scanTableSchema(this.schemaId);
-    }
-
-    protected TableSchema scanTableSchema(long id) {
-        return tableSchemas.computeIfAbsent(id, key -> schemaManager.schema(id));
-    }
-
-    private boolean filterManifestFileMeta(ManifestFileMeta manifest) {
-        return partitionFilter == null
-                || partitionFilter.test(
-                        manifest.numAddedFiles() + manifest.numDeletedFiles(),
-                        manifest.partitionStats().fields(partitionStatsConverter));
-    }
-
-    private boolean filterManifestEntry(ManifestEntry entry) {
-        return filterByPartition(entry) && filterByStats(entry);
-    }
-
-    private boolean filterByPartition(ManifestEntry entry) {
-        return (partitionFilter == null
-                || partitionFilter.test(partitionConverter.convert(entry.partition())));
-    }
-
-    private boolean filterByBucket(ManifestEntry entry) {
-        return (specifiedBucket == null || entry.bucket() == specifiedBucket);
-    }
-
-    private boolean filterByBucketSelector(ManifestEntry entry) {
-        return (bucketSelector == null
-                || bucketSelector.select(entry.bucket(), entry.totalBuckets()));
-    }
-
-    private boolean filterByLevel(ManifestEntry entry) {
-        return (specifiedLevel == null || entry.file().level() == specifiedLevel);
-    }
-
-    protected abstract boolean filterByStats(ManifestEntry entry);
-
-    private List<ManifestEntry> readManifestFileMeta(ManifestFileMeta manifest) {
-        return manifestFileFactory.create().read(manifest.fileName());
-    }
-
-    private List<ManifestFileMeta> readIncremental(Snapshot snapshot) {
-        switch (changelogProducer) {
-            case INPUT:
+    private List<ManifestFileMeta> readManiests(Snapshot snapshot) {
+        switch (scanKind) {
+            case ALL:
+                return snapshot.readAllDataManifests(manifestList);
+            case DELTA:
+                return manifestList.read(snapshot.deltaManifestList());
+            case CHANGELOG:
                 if (snapshot.version() >= 2) {
                     if (snapshot.changelogManifestList() == null) {
                         return Collections.emptyList();
@@ -326,23 +280,70 @@ public abstract class AbstractFileStoreScan implements FileStoreScan {
                         String.format(
                                 "Incremental scan does not accept %s snapshot",
                                 snapshot.commitKind()));
-            case FULL_COMPACTION:
-                if (snapshot.changelogManifestList() == null) {
-                    return Collections.emptyList();
-                } else {
-                    return manifestList.read(snapshot.changelogManifestList());
-                }
-            case NONE:
-                if (snapshot.commitKind() == Snapshot.CommitKind.APPEND) {
-                    return manifestList.read(snapshot.deltaManifestList());
-                }
-                throw new IllegalStateException(
-                        String.format(
-                                "Incremental scan does not accept %s snapshot",
-                                snapshot.commitKind()));
             default:
-                throw new UnsupportedOperationException(
-                        "Unknown changelog producer " + changelogProducer.name());
+                throw new UnsupportedOperationException("Unknown scan kind " + scanKind.name());
         }
     }
+
+    // ------------------------------------------------------------------------
+    // Start Thread Safe Methods: The following methods need to be thread safe because they will be
+    // called by multiple threads
+    // ------------------------------------------------------------------------
+
+    /** Note: Keep this thread-safe. */
+    protected TableSchema scanTableSchema() {
+        return scanTableSchema(this.schemaId);
+    }
+
+    /** Note: Keep this thread-safe. */
+    protected TableSchema scanTableSchema(long id) {
+        return tableSchemas.computeIfAbsent(id, key -> schemaManager.schema(id));
+    }
+
+    /** Note: Keep this thread-safe. */
+    private boolean filterManifestFileMeta(ManifestFileMeta manifest) {
+        return partitionFilter == null
+                || partitionFilter.test(
+                        manifest.numAddedFiles() + manifest.numDeletedFiles(),
+                        manifest.partitionStats().fields(partitionStatsConverter));
+    }
+
+    /** Note: Keep this thread-safe. */
+    private boolean filterManifestEntry(ManifestEntry entry) {
+        return filterByPartition(entry) && filterByStats(entry);
+    }
+
+    /** Note: Keep this thread-safe. */
+    private boolean filterByPartition(ManifestEntry entry) {
+        return (partitionFilter == null
+                || partitionFilter.test(partitionConverter.convert(entry.partition())));
+    }
+
+    /** Note: Keep this thread-safe. */
+    private boolean filterByBucket(ManifestEntry entry) {
+        return (specifiedBucket == null || entry.bucket() == specifiedBucket);
+    }
+
+    /** Note: Keep this thread-safe. */
+    private boolean filterByBucketSelector(ManifestEntry entry) {
+        return (bucketSelector == null
+                || bucketSelector.select(entry.bucket(), entry.totalBuckets()));
+    }
+
+    /** Note: Keep this thread-safe. */
+    private boolean filterByLevel(ManifestEntry entry) {
+        return (specifiedLevel == null || entry.file().level() == specifiedLevel);
+    }
+
+    /** Note: Keep this thread-safe. */
+    protected abstract boolean filterByStats(ManifestEntry entry);
+
+    /** Note: Keep this thread-safe. */
+    private List<ManifestEntry> readManifestFileMeta(ManifestFileMeta manifest) {
+        return manifestFileFactory.create().read(manifest.fileName());
+    }
+
+    // ------------------------------------------------------------------------
+    // End Thread Safe Methods
+    // ------------------------------------------------------------------------
 }

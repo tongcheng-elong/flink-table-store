@@ -19,9 +19,12 @@
 package org.apache.flink.table.store.spark;
 
 import org.apache.flink.configuration.Configuration;
+import org.apache.flink.core.fs.FileSystem;
+import org.apache.flink.core.plugin.PluginUtils;
 import org.apache.flink.table.catalog.ObjectPath;
 import org.apache.flink.table.store.file.catalog.Catalog;
 import org.apache.flink.table.store.file.catalog.CatalogFactory;
+import org.apache.flink.table.store.file.operation.Lock;
 import org.apache.flink.table.store.file.schema.SchemaChange;
 import org.apache.flink.table.store.file.schema.UpdateSchema;
 import org.apache.flink.table.types.logical.RowType;
@@ -38,7 +41,9 @@ import org.apache.spark.sql.connector.catalog.Table;
 import org.apache.spark.sql.connector.catalog.TableCatalog;
 import org.apache.spark.sql.connector.catalog.TableChange;
 import org.apache.spark.sql.connector.catalog.TableChange.AddColumn;
+import org.apache.spark.sql.connector.catalog.TableChange.DeleteColumn;
 import org.apache.spark.sql.connector.catalog.TableChange.RemoveProperty;
+import org.apache.spark.sql.connector.catalog.TableChange.RenameColumn;
 import org.apache.spark.sql.connector.catalog.TableChange.SetProperty;
 import org.apache.spark.sql.connector.catalog.TableChange.UpdateColumnComment;
 import org.apache.spark.sql.connector.catalog.TableChange.UpdateColumnNullability;
@@ -69,7 +74,11 @@ public class SparkCatalog implements TableCatalog, SupportsNamespaces {
     @Override
     public void initialize(String name, CaseInsensitiveStringMap options) {
         this.name = name;
-        this.catalog = CatalogFactory.createCatalog(Configuration.fromMap(options));
+        Configuration configuration =
+                Configuration.fromMap(SparkCaseSensitiveConverter.convert(options));
+        FileSystem.initialize(
+                configuration, PluginUtils.createPluginManagerFromRootFolder(configuration));
+        this.catalog = CatalogFactory.createCatalog(configuration);
     }
 
     @Override
@@ -195,7 +204,9 @@ public class SparkCatalog implements TableCatalog, SupportsNamespaces {
     @Override
     public SparkTable loadTable(Identifier ident) throws NoSuchTableException {
         try {
-            return new SparkTable(catalog.getTable(objectPath(ident)));
+            ObjectPath path = objectPath(ident);
+            return new SparkTable(
+                    catalog.getTable(path), Lock.factory(catalog.lockFactory().orElse(null), path));
         } catch (Catalog.TableNotExistException e) {
             throw new NoSuchTableException(ident);
         }
@@ -260,6 +271,14 @@ public class SparkCatalog implements TableCatalog, SupportsNamespaces {
                     toFlinkType(add.dataType()),
                     add.isNullable(),
                     add.comment());
+        } else if (change instanceof RenameColumn) {
+            RenameColumn rename = (RenameColumn) change;
+            validateAlterNestedField(rename.fieldNames());
+            return SchemaChange.renameColumn(rename.fieldNames()[0], rename.newName());
+        } else if (change instanceof DeleteColumn) {
+            DeleteColumn delete = (DeleteColumn) change;
+            validateAlterNestedField(delete.fieldNames());
+            return SchemaChange.dropColumn(delete.fieldNames()[0]);
         } else if (change instanceof UpdateColumnType) {
             UpdateColumnType update = (UpdateColumnType) change;
             validateAlterNestedField(update.fieldNames());
