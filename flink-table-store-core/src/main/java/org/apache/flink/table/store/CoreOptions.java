@@ -50,6 +50,9 @@ import java.util.Set;
 
 import static org.apache.flink.configuration.ConfigOptions.key;
 import static org.apache.flink.configuration.description.TextElement.text;
+import static org.apache.flink.table.store.file.schema.TableSchema.KEY_FIELD_PREFIX;
+import static org.apache.flink.table.store.file.schema.TableSchema.SYSTEM_FIELD_NAMES;
+import static org.apache.flink.util.Preconditions.checkState;
 
 /** Core options for table store. */
 public class CoreOptions implements Serializable {
@@ -169,12 +172,6 @@ public class CoreOptions implements Serializable {
                     .booleanType()
                     .defaultValue(false)
                     .withDescription("Whether to skip compaction on write.");
-
-    public static final ConfigOption<Boolean> READ_COMPACTED =
-            ConfigOptions.key("read.compacted")
-                    .booleanType()
-                    .defaultValue(false)
-                    .withDescription("Whether to read compacted snapshot only.");
 
     public static final ConfigOption<MemorySize> SOURCE_SPLIT_TARGET_SIZE =
             ConfigOptions.key("source.split.target-size")
@@ -566,10 +563,6 @@ public class CoreOptions implements Serializable {
         return options.get(WRITE_COMPACTION_SKIP);
     }
 
-    public boolean readCompacted() {
-        return options.get(READ_COMPACTED);
-    }
-
     /** Specifies the merge engine for table with primary key. */
     public enum MergeEngine implements DescribedEnum {
         DEDUPLICATE("deduplicate", "De-duplicate and keep the last row."),
@@ -607,15 +600,22 @@ public class CoreOptions implements Serializable {
 
         FULL(
                 "full",
-                "For streaming sources, produces a snapshot on the table upon first startup,"
-                        + " and continue to read the latest changes. "
-                        + "For batch sources, just produce a snapshot but does not read new changes."),
+                "For streaming sources, produces the latest snapshot on the table upon first startup, "
+                        + "and continue to read the latest changes. "
+                        + "For batch sources, just produce the latest snapshot but does not read new changes."),
 
         LATEST(
                 "latest",
                 "For streaming sources, continuously reads latest changes "
                         + "without producing a snapshot at the beginning. "
                         + "For batch sources, behaves the same as the \"full\" startup mode."),
+
+        COMPACTED(
+                "compacted",
+                "For streaming sources, produces a snapshot after the latest compaction on the table "
+                        + "upon first startup, and continue to read the latest changes. "
+                        + "For batch sources, just produce a snapshot after the latest compaction "
+                        + "but does not read new changes."),
 
         FROM_TIMESTAMP(
                 "from-timestamp",
@@ -788,6 +788,22 @@ public class CoreOptions implements Serializable {
             throw new UnsupportedOperationException(
                     "Changelog table with full compaction must have primary keys");
         }
+
+        // Check column names in schema
+        schema.fieldNames()
+                .forEach(
+                        f -> {
+                            checkState(
+                                    !SYSTEM_FIELD_NAMES.contains(f),
+                                    String.format(
+                                            "Field name[%s] in schema cannot be exist in [%s]",
+                                            f, SYSTEM_FIELD_NAMES.toString()));
+                            checkState(
+                                    !f.startsWith(KEY_FIELD_PREFIX),
+                                    String.format(
+                                            "Field name[%s] in schema cannot start with [%s]",
+                                            f, KEY_FIELD_PREFIX));
+                        });
     }
 
     @Internal
