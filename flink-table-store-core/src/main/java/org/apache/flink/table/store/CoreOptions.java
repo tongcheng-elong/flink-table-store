@@ -446,6 +446,10 @@ public class CoreOptions implements Serializable {
         return options.get(MANIFEST_MERGE_MIN_COUNT);
     }
 
+    public MergeEngine mergeEngine() {
+        return options.get(MERGE_ENGINE);
+    }
+
     public long splitTargetSize() {
         return options.get(SOURCE_SPLIT_TARGET_SIZE).getBytes();
     }
@@ -460,6 +464,10 @@ public class CoreOptions implements Serializable {
 
     public boolean writeBufferSpillable(boolean usingObjectStore) {
         return options.getOptional(WRITE_BUFFER_SPILLABLE).orElse(usingObjectStore);
+    }
+
+    public Duration continuousDiscoveryInterval() {
+        return options.get(CONTINUOUS_DISCOVERY_INTERVAL);
     }
 
     public int localSortMaxNumFileHandles() {
@@ -593,7 +601,7 @@ public class CoreOptions implements Serializable {
     /** Specifies the startup mode for log consumer. */
     public enum StartupMode implements DescribedEnum {
         DEFAULT(
-                "deafult",
+                "default",
                 "Determines actual startup mode according to other table properties. "
                         + "If \"scan.timestamp-millis\" is set the actual startup mode will be \"from-timestamp\". "
                         + "Otherwise the actual startup mode will be \"full\"."),

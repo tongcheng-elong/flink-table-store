@@ -21,10 +21,12 @@ package org.apache.flink.table.store.table.source.snapshot;
 import org.apache.flink.core.fs.Path;
 import org.apache.flink.table.store.CoreOptions;
 import org.apache.flink.table.store.file.utils.SnapshotManager;
-import org.apache.flink.table.store.table.FileStoreTable;
+import org.apache.flink.table.store.table.DataTable;
 import org.apache.flink.table.store.table.source.DataTableScan;
 
 import javax.annotation.Nullable;
+
+import java.io.Serializable;
 
 /** {@link SnapshotEnumerator} for batch read. */
 public class StaticDataFileSnapshotEnumerator implements SnapshotEnumerator {
@@ -35,7 +37,7 @@ public class StaticDataFileSnapshotEnumerator implements SnapshotEnumerator {
 
     private boolean hasNext;
 
-    private StaticDataFileSnapshotEnumerator(
+    public StaticDataFileSnapshotEnumerator(
             Path tablePath, DataTableScan scan, StartingScanner startingScanner) {
         this.snapshotManager = new SnapshotManager(tablePath);
         this.scan = scan;
@@ -59,8 +61,7 @@ public class StaticDataFileSnapshotEnumerator implements SnapshotEnumerator {
     //  static create methods
     // ------------------------------------------------------------------------
 
-    public static StaticDataFileSnapshotEnumerator create(
-            FileStoreTable table, DataTableScan scan) {
+    public static StaticDataFileSnapshotEnumerator create(DataTable table, DataTableScan scan) {
         CoreOptions.StartupMode startupMode = table.options().startupMode();
         StartingScanner startingScanner;
         if (startupMode == CoreOptions.StartupMode.FULL
@@ -73,5 +74,15 @@ public class StaticDataFileSnapshotEnumerator implements SnapshotEnumerator {
         }
 
         return new StaticDataFileSnapshotEnumerator(table.location(), scan, startingScanner);
+    }
+
+    // ------------------------------------------------------------------------
+    //  factory interface
+    // ------------------------------------------------------------------------
+
+    /** Factory to create {@link StaticDataFileSnapshotEnumerator}. */
+    public interface Factory extends Serializable {
+
+        StaticDataFileSnapshotEnumerator create(DataTable table, DataTableScan scan);
     }
 }
