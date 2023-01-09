@@ -29,6 +29,7 @@ import org.apache.flink.configuration.ReadableConfig;
 import org.apache.flink.configuration.description.Description;
 import org.apache.flink.configuration.description.InlineElement;
 import org.apache.flink.core.fs.Path;
+import org.apache.flink.table.api.TableException;
 import org.apache.flink.table.store.file.WriteMode;
 import org.apache.flink.table.store.file.schema.TableSchema;
 import org.apache.flink.table.store.format.FileFormat;
@@ -45,11 +46,13 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 
 import static org.apache.flink.configuration.ConfigOptions.key;
 import static org.apache.flink.configuration.description.TextElement.text;
+import static org.apache.flink.table.store.file.WriteMode.APPEND_ONLY;
 import static org.apache.flink.table.store.file.schema.TableSchema.KEY_FIELD_PREFIX;
 import static org.apache.flink.table.store.file.schema.TableSchema.SYSTEM_FIELD_NAMES;
 import static org.apache.flink.util.Preconditions.checkState;
@@ -167,11 +170,14 @@ public class CoreOptions implements Serializable {
                     .defaultValue(WriteMode.CHANGE_LOG)
                     .withDescription("Specify the write mode for table.");
 
-    public static final ConfigOption<Boolean> WRITE_COMPACTION_SKIP =
-            ConfigOptions.key("write.compaction-skip")
+    public static final ConfigOption<Boolean> WRITE_ONLY =
+            ConfigOptions.key("write-only")
                     .booleanType()
                     .defaultValue(false)
-                    .withDescription("Whether to skip compaction on write.");
+                    .withDeprecatedKeys("write.compaction-skip")
+                    .withDescription(
+                            "If set to true, compactions and snapshot expiration will be skipped. "
+                                    + "This option is used along with dedicated compact jobs.");
 
     public static final ConfigOption<MemorySize> SOURCE_SPLIT_TARGET_SIZE =
             ConfigOptions.key("source.split.target-size")
@@ -340,6 +346,13 @@ public class CoreOptions implements Serializable {
                     .withDescription(
                             "Optional timestamp used in case of \"from-timestamp\" scan mode.");
 
+    public static final ConfigOption<Long> SCAN_SNAPSHOT_ID =
+            ConfigOptions.key("scan.snapshot-id")
+                    .longType()
+                    .noDefaultValue()
+                    .withDescription(
+                            "Optional snapshot id used in case of \"from-snapshot\" scan mode");
+
     public static final ConfigOption<Duration> LOG_RETENTION =
             ConfigOptions.key("log.retention")
                     .durationType()
@@ -396,6 +409,14 @@ public class CoreOptions implements Serializable {
 
     public CoreOptions(Configuration options) {
         this.options = options;
+    }
+
+    public Configuration toConfiguration() {
+        return options;
+    }
+
+    public Map<String, String> toMap() {
+        return options.toMap();
     }
 
     public int bucket() {
@@ -543,16 +564,24 @@ public class CoreOptions implements Serializable {
         if (mode == StartupMode.DEFAULT) {
             if (options.getOptional(SCAN_TIMESTAMP_MILLIS).isPresent()) {
                 return StartupMode.FROM_TIMESTAMP;
+            } else if (options.getOptional(SCAN_SNAPSHOT_ID).isPresent()) {
+                return StartupMode.FROM_SNAPSHOT;
             } else {
-                return StartupMode.FULL;
+                return StartupMode.LATEST_FULL;
             }
+        } else if (mode == StartupMode.FULL) {
+            return StartupMode.LATEST_FULL;
         } else {
             return mode;
         }
     }
 
-    public Long logScanTimestampMills() {
+    public Long scanTimestampMills() {
         return options.get(SCAN_TIMESTAMP_MILLIS);
+    }
+
+    public Long scanSnapshotId() {
+        return options.get(SCAN_SNAPSHOT_ID);
     }
 
     public Duration changelogProducerFullCompactionTriggerInterval() {
@@ -567,8 +596,8 @@ public class CoreOptions implements Serializable {
         return options.get(WRITE_MODE);
     }
 
-    public boolean writeCompactionSkip() {
-        return options.get(WRITE_COMPACTION_SKIP);
+    public boolean writeOnly() {
+        return options.get(WRITE_ONLY);
     }
 
     /** Specifies the merge engine for table with primary key. */
@@ -603,23 +632,26 @@ public class CoreOptions implements Serializable {
         DEFAULT(
                 "default",
                 "Determines actual startup mode according to other table properties. "
-                        + "If \"scan.timestamp-millis\" is set the actual startup mode will be \"from-timestamp\". "
-                        + "Otherwise the actual startup mode will be \"full\"."),
+                        + "If \"scan.timestamp-millis\" is set the actual startup mode will be \"from-timestamp\", "
+                        + "and if \"scan.snapshot-id\" is set the actual startup mode will be \"from-snapshot\". "
+                        + "Otherwise the actual startup mode will be \"latest-full\"."),
 
-        FULL(
-                "full",
+        LATEST_FULL(
+                "latest-full",
                 "For streaming sources, produces the latest snapshot on the table upon first startup, "
                         + "and continue to read the latest changes. "
                         + "For batch sources, just produce the latest snapshot but does not read new changes."),
+
+        FULL("full", "Deprecated. Same as \"latest-full\"."),
 
         LATEST(
                 "latest",
                 "For streaming sources, continuously reads latest changes "
                         + "without producing a snapshot at the beginning. "
-                        + "For batch sources, behaves the same as the \"full\" startup mode."),
+                        + "For batch sources, behaves the same as the \"latest-full\" startup mode."),
 
-        COMPACTED(
-                "compacted",
+        COMPACTED_FULL(
+                "compacted-full",
                 "For streaming sources, produces a snapshot after the latest compaction on the table "
                         + "upon first startup, and continue to read the latest changes. "
                         + "For batch sources, just produce a snapshot after the latest compaction "
@@ -631,7 +663,14 @@ public class CoreOptions implements Serializable {
                         + "starting from timestamp specified by \"scan.timestamp-millis\", "
                         + "without producing a snapshot at the beginning. "
                         + "For batch sources, produces a snapshot at timestamp specified by \"scan.timestamp-millis\" "
-                        + "but does not read new changes.");
+                        + "but does not read new changes."),
+
+        FROM_SNAPSHOT(
+                "from-snapshot",
+                "For streaming sources, continuously reads changes "
+                        + "starting from snapshot specified by \"scan.snapshot-id\", "
+                        + "without producing a snapshot at the beginning. For batch sources, "
+                        + "produces a snapshot specified by \"scan.snapshot-id\" but does not read new changes.");
 
         private final String value;
         private final String description;
@@ -763,21 +802,14 @@ public class CoreOptions implements Serializable {
     public static void validateTableSchema(TableSchema schema) {
         CoreOptions options = new CoreOptions(schema.options());
         if (options.startupMode() == StartupMode.FROM_TIMESTAMP) {
-            Preconditions.checkArgument(
-                    options.logScanTimestampMills() != null,
-                    String.format(
-                            "%s can not be null when you use %s for %s",
-                            SCAN_TIMESTAMP_MILLIS.key(),
-                            StartupMode.FROM_TIMESTAMP,
-                            SCAN_MODE.key()));
+            checkOptionExistInMode(options, SCAN_TIMESTAMP_MILLIS, StartupMode.FROM_TIMESTAMP);
+            checkOptionsConflict(options, SCAN_SNAPSHOT_ID, SCAN_TIMESTAMP_MILLIS);
+        } else if (options.startupMode() == StartupMode.FROM_SNAPSHOT) {
+            checkOptionExistInMode(options, SCAN_SNAPSHOT_ID, StartupMode.FROM_SNAPSHOT);
+            checkOptionsConflict(options, SCAN_TIMESTAMP_MILLIS, SCAN_SNAPSHOT_ID);
         } else {
-            Preconditions.checkArgument(
-                    options.logScanTimestampMills() == null,
-                    String.format(
-                            "%s should be %s when you set %s",
-                            SCAN_MODE.key(),
-                            StartupMode.FROM_TIMESTAMP,
-                            SCAN_TIMESTAMP_MILLIS.key()));
+            checkOptionNotExistInMode(options, SCAN_TIMESTAMP_MILLIS, options.startupMode());
+            checkOptionNotExistInMode(options, SCAN_SNAPSHOT_ID, options.startupMode());
         }
 
         Preconditions.checkArgument(
@@ -812,6 +844,39 @@ public class CoreOptions implements Serializable {
                                             "Field name[%s] in schema cannot start with [%s]",
                                             f, KEY_FIELD_PREFIX));
                         });
+
+        // Cannot define any primary key in an append-only table.
+        if (!schema.primaryKeys().isEmpty() && Objects.equals(APPEND_ONLY, options.writeMode())) {
+            throw new TableException(
+                    "Cannot define any primary key in an append-only table. Set 'write-mode'='change-log' if "
+                            + "still want to keep the primary key definition.");
+        }
+    }
+
+    private static void checkOptionExistInMode(
+            CoreOptions options, ConfigOption<?> option, StartupMode startupMode) {
+        Preconditions.checkArgument(
+                options.options.contains(option),
+                String.format(
+                        "%s can not be null when you use %s for %s",
+                        option.key(), startupMode, SCAN_MODE.key()));
+    }
+
+    private static void checkOptionNotExistInMode(
+            CoreOptions options, ConfigOption<?> option, StartupMode startupMode) {
+        Preconditions.checkArgument(
+                !options.options.contains(option),
+                String.format(
+                        "%s must be null when you use %s for %s",
+                        option.key(), startupMode, SCAN_MODE.key()));
+    }
+
+    private static void checkOptionsConflict(
+            CoreOptions options, ConfigOption<?> illegalOption, ConfigOption<?> legalOption) {
+        Preconditions.checkArgument(
+                !options.options.contains(illegalOption),
+                String.format(
+                        "%s must be null when you set %s", illegalOption.key(), legalOption.key()));
     }
 
     @Internal

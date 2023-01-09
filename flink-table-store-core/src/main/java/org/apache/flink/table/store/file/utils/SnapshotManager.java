@@ -32,6 +32,7 @@ import java.io.IOException;
 import java.util.Iterator;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.TimeUnit;
 import java.util.function.BinaryOperator;
 
 import static org.apache.flink.table.store.file.utils.FileUtils.listVersionedFiles;
@@ -44,6 +45,8 @@ public class SnapshotManager {
     private static final String SNAPSHOT_PREFIX = "snapshot-";
     public static final String EARLIEST = "EARLIEST";
     public static final String LATEST = "LATEST";
+    private static final int READ_HINT_RETRY_NUM = 3;
+    private static final int READ_HINT_RETRY_INTERVAL = 1;
 
     private final Path tablePath;
 
@@ -129,6 +132,23 @@ public class SnapshotManager {
         return earliest - 1;
     }
 
+    /** Returns a snapshot earlier than or equals to the timestamp mills. */
+    public @Nullable Long earlierOrEqualTimeMills(long timestampMills) {
+        Long earliest = earliestSnapshotId();
+        Long latest = latestSnapshotId();
+        if (earliest == null || latest == null) {
+            return null;
+        }
+
+        for (long i = latest; i >= earliest; i--) {
+            long commitTime = snapshot(i).timeMillis();
+            if (commitTime <= timestampMills) {
+                return i;
+            }
+        }
+        return null;
+    }
+
     public long snapshotCount() throws IOException {
         return listVersionedFiles(snapshotDirectory(), SNAPSHOT_PREFIX).count();
     }
@@ -197,13 +217,16 @@ public class SnapshotManager {
     public Long readHint(String fileName) {
         Path snapshotDir = snapshotDirectory();
         Path path = new Path(snapshotDir, fileName);
-        try {
-            if (path.getFileSystem().exists(path)) {
+        int retryNumber = 0;
+        while (retryNumber++ < READ_HINT_RETRY_NUM) {
+            try {
                 return Long.parseLong(FileUtils.readFileUtf8(path));
+            } catch (Exception ignored) {
             }
-        } catch (Exception e) {
-            LOG.info(
-                    "Failed to read hint file " + fileName + ". Falling back to listing files.", e);
+            try {
+                TimeUnit.MILLISECONDS.sleep(READ_HINT_RETRY_INTERVAL);
+            } catch (InterruptedException ignored) {
+            }
         }
         return null;
     }

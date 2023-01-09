@@ -18,13 +18,19 @@
 
 package org.apache.flink.table.store.connector;
 
+import org.apache.flink.api.common.JobStatus;
+import org.apache.flink.api.common.restartstrategy.RestartStrategies;
+import org.apache.flink.core.execution.JobClient;
 import org.apache.flink.core.fs.Path;
 import org.apache.flink.runtime.client.JobStatusMessage;
 import org.apache.flink.runtime.testutils.MiniClusterResourceConfiguration;
+import org.apache.flink.streaming.api.CheckpointingMode;
+import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.apache.flink.table.api.EnvironmentSettings;
 import org.apache.flink.table.api.TableEnvironment;
 import org.apache.flink.table.api.TableResult;
 import org.apache.flink.table.api.config.ExecutionConfigOptions;
+import org.apache.flink.table.store.connector.action.FlinkActions;
 import org.apache.flink.table.store.file.utils.FailingAtomicRenameFileSystem;
 import org.apache.flink.test.util.AbstractTestBase;
 import org.apache.flink.test.util.MiniClusterWithClientResource;
@@ -102,17 +108,22 @@ public class ChangelogWithKeyFileStoreTableITCase extends TestBaseUtils {
         return TableEnvironment.create(EnvironmentSettings.newInstance().inBatchMode().build());
     }
 
-    private TableEnvironment createStreamingTableEnvironment() {
+    private TableEnvironment createStreamingTableEnvironment(int checkpointIntervalMs) {
         TableEnvironment sEnv =
                 TableEnvironment.create(
                         EnvironmentSettings.newInstance().inStreamingMode().build());
         // set checkpoint interval to a random number to emulate different speed of commit
         sEnv.getConfig()
                 .getConfiguration()
-                .set(
-                        CHECKPOINTING_INTERVAL,
-                        Duration.ofMillis(ThreadLocalRandom.current().nextInt(900) + 100));
+                .set(CHECKPOINTING_INTERVAL, Duration.ofMillis(checkpointIntervalMs));
         return sEnv;
+    }
+
+    private StreamExecutionEnvironment createStreamExecutionEnvironment(int checkpointIntervalMs) {
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+        env.getCheckpointConfig().setCheckpointingMode(CheckpointingMode.EXACTLY_ONCE);
+        env.getCheckpointConfig().setCheckpointInterval(checkpointIntervalMs);
+        return env;
     }
 
     // ------------------------------------------------------------------------
@@ -121,7 +132,8 @@ public class ChangelogWithKeyFileStoreTableITCase extends TestBaseUtils {
 
     @Test
     public void testFullCompactionTriggerInterval() throws Exception {
-        TableEnvironment sEnv = createStreamingTableEnvironment();
+        TableEnvironment sEnv =
+                createStreamingTableEnvironment(ThreadLocalRandom.current().nextInt(900) + 100);
         sEnv.getConfig()
                 .getConfiguration()
                 .set(ExecutionConfigOptions.TABLE_EXEC_RESOURCE_DEFAULT_PARALLELISM, 1);
@@ -195,34 +207,104 @@ public class ChangelogWithKeyFileStoreTableITCase extends TestBaseUtils {
         Assert.assertEquals(expected, actual);
     }
 
+    @Test
+    public void testFullCompactionWithLongCheckpointInterval() throws Exception {
+        // create table
+        TableEnvironment bEnv = createBatchTableEnvironment();
+        bEnv.getConfig()
+                .getConfiguration()
+                .set(ExecutionConfigOptions.TABLE_EXEC_RESOURCE_DEFAULT_PARALLELISM, 1);
+        bEnv.executeSql(
+                String.format(
+                        "CREATE CATALOG testCatalog WITH ('type'='table-store', 'warehouse'='%s')",
+                        path));
+        bEnv.executeSql("USE CATALOG testCatalog");
+        bEnv.executeSql(
+                "CREATE TABLE T ("
+                        + "  k INT,"
+                        + "  v INT,"
+                        + "  PRIMARY KEY (k) NOT ENFORCED"
+                        + ") WITH ("
+                        + "  'bucket' = '1',"
+                        + "  'changelog-producer' = 'full-compaction',"
+                        + "  'changelog-producer.compaction-interval' = '2s',"
+                        + "  'write-only' = 'true'"
+                        + ")");
+
+        // run select job
+        TableEnvironment sEnv = createStreamingTableEnvironment(100);
+        sEnv.getConfig()
+                .getConfiguration()
+                .set(ExecutionConfigOptions.TABLE_EXEC_RESOURCE_DEFAULT_PARALLELISM, 1);
+        sEnv.executeSql(
+                String.format(
+                        "CREATE CATALOG testCatalog WITH ('type'='table-store', 'warehouse'='%s')",
+                        path));
+        sEnv.executeSql("USE CATALOG testCatalog");
+        CloseableIterator<Row> it = sEnv.executeSql("SELECT * FROM T").collect();
+
+        // run compact job
+        StreamExecutionEnvironment env = createStreamExecutionEnvironment(2000);
+        env.setParallelism(1);
+        env.setRestartStrategy(RestartStrategies.noRestart());
+        FlinkActions.compact(new Path(path + "/default.db/T")).build(env);
+        JobClient client = env.executeAsync();
+
+        // write records for a while
+        long startMs = System.currentTimeMillis();
+        int currentKey = 0;
+        while (System.currentTimeMillis() - startMs <= 10000) {
+            currentKey++;
+            bEnv.executeSql(
+                            String.format(
+                                    "INSERT INTO T VALUES (%d, %d)", currentKey, currentKey * 100))
+                    .await();
+        }
+
+        Assert.assertEquals(JobStatus.RUNNING, client.getJobStatus().get());
+
+        for (int i = 1; i <= currentKey; i++) {
+            Assert.assertTrue(it.hasNext());
+            Assert.assertEquals(String.format("+I[%d, %d]", i, i * 100), it.next().toString());
+        }
+        it.close();
+    }
+
     // ------------------------------------------------------------------------
     //  Random Tests
     // ------------------------------------------------------------------------
 
-    @Test
+    @Test(timeout = 600000)
     public void testNoChangelogProducerBatchRandom() throws Exception {
         TableEnvironment bEnv = createBatchTableEnvironment();
         testNoChangelogProducerRandom(bEnv, 1, false);
     }
 
-    @Test
+    @Test(timeout = 600000)
     public void testNoChangelogProducerStreamingRandom() throws Exception {
-        TableEnvironment sEnv = createStreamingTableEnvironment();
         ThreadLocalRandom random = ThreadLocalRandom.current();
+        TableEnvironment sEnv = createStreamingTableEnvironment(random.nextInt(900) + 100);
         testNoChangelogProducerRandom(sEnv, random.nextInt(1, 3), random.nextBoolean());
     }
 
-    @Test
+    @Test(timeout = 600000)
     public void testFullCompactionChangelogProducerBatchRandom() throws Exception {
         TableEnvironment bEnv = createBatchTableEnvironment();
         testFullCompactionChangelogProducerRandom(bEnv, 1, false);
     }
 
-    @Test
+    @Test(timeout = 600000)
     public void testFullCompactionChangelogProducerStreamingRandom() throws Exception {
-        TableEnvironment sEnv = createStreamingTableEnvironment();
         ThreadLocalRandom random = ThreadLocalRandom.current();
+        TableEnvironment sEnv = createStreamingTableEnvironment(random.nextInt(900) + 100);
         testFullCompactionChangelogProducerRandom(sEnv, random.nextInt(1, 3), random.nextBoolean());
+    }
+
+    @Test(timeout = 600000)
+    public void testStandAloneFullCompactJobRandom() throws Exception {
+        ThreadLocalRandom random = ThreadLocalRandom.current();
+        TableEnvironment sEnv = createStreamingTableEnvironment(random.nextInt(900) + 100);
+        testStandAloneFullCompactJobRandom(sEnv, random.nextInt(1, 3), random.nextBoolean());
     }
 
     private static final int NUM_PARTS = 4;
@@ -241,19 +323,63 @@ public class ChangelogWithKeyFileStoreTableITCase extends TestBaseUtils {
 
     private void testFullCompactionChangelogProducerRandom(
             TableEnvironment tEnv, int numProducers, boolean enableFailure) throws Exception {
+        ThreadLocalRandom random = ThreadLocalRandom.current();
+
         testRandom(
                 tEnv,
                 numProducers,
                 enableFailure,
                 "'bucket' = '4',"
+                        + String.format(
+                                "'write-buffer-size' = '%s',",
+                                random.nextBoolean() ? "512kb" : "1mb")
                         + "'changelog-producer' = 'full-compaction',"
                         + "'changelog-producer.compaction-interval' = '1s'");
 
         // sleep for a random amount of time to check
         // if we can first read complete records then read incremental records correctly
-        Thread.sleep(ThreadLocalRandom.current().nextInt(5000));
+        Thread.sleep(random.nextInt(5000));
 
-        TableEnvironment sEnv = createStreamingTableEnvironment();
+        checkFullCompactionTestResult(numProducers);
+    }
+
+    private void testStandAloneFullCompactJobRandom(
+            TableEnvironment tEnv, int numProducers, boolean enableConflicts) throws Exception {
+        ThreadLocalRandom random = ThreadLocalRandom.current();
+
+        testRandom(
+                tEnv,
+                numProducers,
+                false,
+                "'bucket' = '4',"
+                        + String.format(
+                                "'write-buffer-size' = '%s',",
+                                random.nextBoolean() ? "512kb" : "1mb")
+                        + "'changelog-producer' = 'full-compaction',"
+                        + "'changelog-producer.compaction-interval' = '2s',"
+                        + "'write-only' = 'true'");
+
+        // sleep for a random amount of time to check
+        // if dedicated compactor job can find first snapshot to compact correctly
+        Thread.sleep(random.nextInt(2500));
+
+        for (int i = enableConflicts ? 2 : 1; i > 0; i--) {
+            StreamExecutionEnvironment env =
+                    createStreamExecutionEnvironment(random.nextInt(1900) + 100);
+            env.setParallelism(2);
+            FlinkActions.compact(new Path(path + "/default.db/T")).build(env);
+            env.executeAsync();
+        }
+
+        // sleep for a random amount of time to check
+        // if we can first read complete records then read incremental records correctly
+        Thread.sleep(random.nextInt(2500));
+
+        checkFullCompactionTestResult(numProducers);
+    }
+
+    private void checkFullCompactionTestResult(int numProducers) throws Exception {
+        TableEnvironment sEnv = createStreamingTableEnvironment(100);
         sEnv.getConfig()
                 .getConfiguration()
                 .set(ExecutionConfigOptions.TABLE_EXEC_RESOURCE_DEFAULT_PARALLELISM, 1);
@@ -334,7 +460,7 @@ public class ChangelogWithKeyFileStoreTableITCase extends TestBaseUtils {
                                 + (LIMIT + NUM_PARTS * NUM_KEYS)
                                 + "',"
                                 + "  'rows-per-second' = '"
-                                + (LIMIT / 5 + ThreadLocalRandom.current().nextInt(LIMIT / 10))
+                                + (LIMIT / 20 + ThreadLocalRandom.current().nextInt(LIMIT / 20))
                                 + "'"
                                 + ")")
                 .await();

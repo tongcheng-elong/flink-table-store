@@ -69,7 +69,10 @@ import java.util.stream.Collectors;
 import static org.apache.flink.table.store.CoreOptions.BUCKET;
 import static org.apache.flink.table.store.CoreOptions.BUCKET_KEY;
 import static org.apache.flink.table.store.CoreOptions.COMPACTION_MAX_FILE_NUM;
-import static org.apache.flink.table.store.CoreOptions.WRITE_COMPACTION_SKIP;
+import static org.apache.flink.table.store.CoreOptions.FILE_FORMAT;
+import static org.apache.flink.table.store.CoreOptions.SNAPSHOT_NUM_RETAINED_MAX;
+import static org.apache.flink.table.store.CoreOptions.SNAPSHOT_NUM_RETAINED_MIN;
+import static org.apache.flink.table.store.CoreOptions.WRITE_ONLY;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /** Base test class for {@link FileStoreTable}. */
@@ -141,6 +144,40 @@ public abstract class FileStoreTableTestBase {
         Predicate<Path> pathPredicate = path -> path.toString().contains(tempDir.toString());
         assertThat(traceableFileSystem.openInputStreams(pathPredicate)).isEmpty();
         assertThat(traceableFileSystem.openOutputStreams(pathPredicate)).isEmpty();
+    }
+
+    @Test
+    public void testChangeFormat() throws Exception {
+        FileStoreTable table = createFileStoreTable(conf -> conf.set(FILE_FORMAT, "orc"));
+
+        TableWrite write = table.newWrite(commitUser);
+        TableCommit commit = table.newCommit(commitUser);
+        write.write(rowData(1, 10, 100L));
+        write.write(rowData(2, 20, 200L));
+        commit.commit(0, write.prepareCommit(true, 0));
+        write.close();
+        commit.close();
+
+        assertThat(getResult(table.newRead(), table.newScan().plan().splits(), BATCH_ROW_TO_STRING))
+                .containsExactlyInAnyOrder(
+                        "1|10|100|binary|varbinary|mapKey:mapVal|multiset",
+                        "2|20|200|binary|varbinary|mapKey:mapVal|multiset");
+
+        table = createFileStoreTable(conf -> conf.set(FILE_FORMAT, "avro"));
+        write = table.newWrite(commitUser);
+        commit = table.newCommit(commitUser);
+        write.write(rowData(1, 11, 111L));
+        write.write(rowData(2, 22, 222L));
+        commit.commit(1, write.prepareCommit(true, 1));
+        write.close();
+        commit.close();
+
+        assertThat(getResult(table.newRead(), table.newScan().plan().splits(), BATCH_ROW_TO_STRING))
+                .containsExactlyInAnyOrder(
+                        "1|10|100|binary|varbinary|mapKey:mapVal|multiset",
+                        "2|20|200|binary|varbinary|mapKey:mapVal|multiset",
+                        "1|11|111|binary|varbinary|mapKey:mapVal|multiset",
+                        "2|22|222|binary|varbinary|mapKey:mapVal|multiset");
     }
 
     @Test
@@ -282,12 +319,16 @@ public abstract class FileStoreTableTestBase {
     }
 
     @Test
-    public void testWriteWithoutCompaction() throws Exception {
+    public void testWriteWithoutCompactionAndExpiration() throws Exception {
         FileStoreTable table =
                 createFileStoreTable(
                         conf -> {
-                            conf.set(WRITE_COMPACTION_SKIP, true);
+                            conf.set(WRITE_ONLY, true);
                             conf.set(COMPACTION_MAX_FILE_NUM, 5);
+                            // 'write-only' options will also skip expiration
+                            // these options shouldn't have any effect
+                            conf.set(SNAPSHOT_NUM_RETAINED_MIN, 3);
+                            conf.set(SNAPSHOT_NUM_RETAINED_MAX, 3);
                         });
 
         TableWrite write = table.newWrite(commitUser);

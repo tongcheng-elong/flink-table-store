@@ -28,24 +28,14 @@ under the License.
 
 Table Store not only supports Flink SQL writes and queries natively,
 but also provides queries from other popular engines, such as
-Apache Hive and Apache Spark.
+Apache Spark and Apache Hive.
 
 ## Compatibility Matrix
 
-| Engine    | Version  | Feature                                              |    Read Pushdown   |
-|:----------|:---------|:-----------------------------------------------------|--------------------|
-| Flink     | 1.14     | read, write, create/drop table, create/drop database | Projection, Filter |
-| Flink     | 1.15     | read, write, create/drop table, create/drop database | Projection, Filter |
-| Flink     | 1.16     | read, write, create/drop table, create/drop database | Projection, Filter |
-| Hive      | 2.1      | read                                                 | Projection, Filter |
-| Hive      | 2.1 CDH 6.3 | read                                                 | Projection, Filter |
-| Hive      | 2.2      | read                                                 | Projection, Filter |
-| Hive      | 2.3      | read                                                 | Projection, Filter |
-| Hive      | 3.1      | read                                                 | Projection, Filter |
-| Spark     | 2.4      | read                                                 | Projection, Filter |
-| Spark     | 3.0      | read, create/drop table, create/drop database        | Projection, Filter |
-| Spark     | 3.1      | read, create/drop table, create/drop database        | Projection, Filter |
-| Spark     | 3.2      | read, create/drop table, create/drop database        | Projection, Filter |
-| Spark     | 3.3      | read, create/drop table, create/drop database        | Projection, Filter |
-| Trino     | 358      | read                                                 | Projection, Filter |
-| Trino     | 388      | read                                                 | Projection, Filter |
+| Engine | Version | Feature | Read Pushdown |
+|---|---|---|---|
+| Flink | 1.16/1.15/1.14 | batch/streaming read, batch/streaming write, create/drop table, create/drop database | Projection, Filter |
+| Hive      | 3.1/2.3/2.2/2.1/2.1 CDH 6.3 | batch read | Projection, Filter |
+| Spark     | 3.3/3.2/3.1/3.0 | batch read, batch write, create/drop table, create/drop database | Projection, Filter |
+| Spark     | 2.4 | batch read | Projection, Filter |
+| Trino     | 388/358 | batch read | Projection, Filter |
