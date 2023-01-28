@@ -18,23 +18,23 @@
 
 package org.apache.flink.table.store.format.parquet;
 
-import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.configuration.Configuration;
-import org.apache.flink.connector.file.src.FileSourceSplit;
-import org.apache.flink.connector.file.src.reader.BulkFormat;
-import org.apache.flink.connector.file.src.util.Pool;
 import org.apache.flink.core.fs.Path;
-import org.apache.flink.table.data.RowData;
+import org.apache.flink.table.store.data.InternalRow;
 import org.apache.flink.table.store.data.columnar.ColumnVector;
-import org.apache.flink.table.store.data.columnar.ColumnarRowData;
+import org.apache.flink.table.store.data.columnar.ColumnarRow;
 import org.apache.flink.table.store.data.columnar.ColumnarRowIterator;
 import org.apache.flink.table.store.data.columnar.VectorizedColumnBatch;
 import org.apache.flink.table.store.data.columnar.writable.WritableColumnVector;
+import org.apache.flink.table.store.file.utils.RecordReader;
+import org.apache.flink.table.store.file.utils.RecordReader.RecordIterator;
+import org.apache.flink.table.store.format.FormatReaderFactory;
 import org.apache.flink.table.store.format.parquet.reader.ColumnReader;
 import org.apache.flink.table.store.format.parquet.reader.ParquetDecimalVector;
-import org.apache.flink.table.types.logical.LogicalType;
-import org.apache.flink.table.types.logical.LogicalTypeRoot;
-import org.apache.flink.table.types.logical.RowType;
+import org.apache.flink.table.store.types.DataType;
+import org.apache.flink.table.store.types.DataTypeRoot;
+import org.apache.flink.table.store.types.RowType;
+import org.apache.flink.table.store.utils.Pool;
 
 import org.apache.parquet.ParquetReadOptions;
 import org.apache.parquet.column.ColumnDescriptor;
@@ -51,7 +51,6 @@ import org.slf4j.LoggerFactory;
 import javax.annotation.Nullable;
 
 import java.io.IOException;
-import java.io.UnsupportedEncodingException;
 import java.util.Arrays;
 import java.util.HashSet;
 import java.util.List;
@@ -62,10 +61,10 @@ import static org.apache.flink.table.store.format.parquet.reader.ParquetSplitRea
 import static org.apache.parquet.hadoop.UnmaterializableRecordCounter.BAD_RECORD_THRESHOLD_CONF_KEY;
 
 /**
- * Parquet {@link BulkFormat} that reads data from the file to {@link VectorizedColumnBatch} in
- * vectorized mode.
+ * Parquet {@link FormatReaderFactory} that reads data from the file to {@link
+ * VectorizedColumnBatch} in vectorized mode.
  */
-public class ParquetReaderFactory implements BulkFormat<RowData, FileSourceSplit> {
+public class ParquetReaderFactory implements FormatReaderFactory {
 
     private static final Logger LOG = LoggerFactory.getLogger(ParquetReaderFactory.class);
 
@@ -77,7 +76,7 @@ public class ParquetReaderFactory implements BulkFormat<RowData, FileSourceSplit
 
     private final Configuration conf;
     private final String[] projectedFields;
-    private final LogicalType[] projectedTypes;
+    private final DataType[] projectedTypes;
     private final int batchSize;
     private final Set<Integer> unknownFieldsIndices = new HashSet<>();
 
@@ -88,18 +87,14 @@ public class ParquetReaderFactory implements BulkFormat<RowData, FileSourceSplit
     public ParquetReaderFactory(Configuration conf, RowType projectedType, int batchSize) {
         this.conf = conf;
         this.projectedFields = projectedType.getFieldNames().toArray(new String[0]);
-        this.projectedTypes = projectedType.getChildren().toArray(new LogicalType[0]);
+        this.projectedTypes = projectedType.getFieldTypes().toArray(new DataType[0]);
         this.batchSize = batchSize;
     }
 
     @Override
-    public ParquetReader createReader(
-            final org.apache.flink.configuration.Configuration config, final FileSourceSplit split)
-            throws IOException {
-
-        final Path filePath = split.path();
-        final long splitOffset = split.offset();
-        final long splitLength = split.length();
+    public ParquetReader createReader(Path filePath) throws IOException {
+        final long splitOffset = 0;
+        final long splitLength = filePath.getFileSystem().getFileStatus(filePath).getLen();
 
         ParquetReadOptions.Builder builder =
                 ParquetReadOptions.builder().withRange(splitOffset, splitOffset + splitLength);
@@ -135,18 +130,6 @@ public class ParquetReaderFactory implements BulkFormat<RowData, FileSourceSplit
         if (badRecordThresh != null) {
             builder.set(BAD_RECORD_THRESHOLD_CONF_KEY, badRecordThresh);
         }
-    }
-
-    @Override
-    public ParquetReader restoreReader(
-            final org.apache.flink.configuration.Configuration config, final FileSourceSplit split)
-            throws IOException {
-        throw new UnsupportedEncodingException();
-    }
-
-    @Override
-    public boolean isSplittable() {
-        return true;
     }
 
     /** Clips `parquetSchema` according to `fieldNames`. */
@@ -240,14 +223,14 @@ public class ParquetReaderFactory implements BulkFormat<RowData, FileSourceSplit
         ColumnVector[] vectors = new ColumnVector[writableVectors.length];
         for (int i = 0; i < writableVectors.length; i++) {
             vectors[i] =
-                    projectedTypes[i].getTypeRoot() == LogicalTypeRoot.DECIMAL
+                    projectedTypes[i].getTypeRoot() == DataTypeRoot.DECIMAL
                             ? new ParquetDecimalVector(writableVectors[i])
                             : writableVectors[i];
         }
         return new VectorizedColumnBatch(vectors);
     }
 
-    private class ParquetReader implements BulkFormat.Reader<RowData> {
+    private class ParquetReader implements RecordReader<InternalRow> {
 
         private ParquetFileReader reader;
 
@@ -289,16 +272,15 @@ public class ParquetReaderFactory implements BulkFormat<RowData, FileSourceSplit
 
         @Nullable
         @Override
-        public RecordIterator<RowData> readBatch() throws IOException {
+        public RecordIterator<InternalRow> readBatch() throws IOException {
             final ParquetReaderBatch batch = getCachedEntry();
 
-            final long rowsReturnedBefore = rowsReturned;
             if (!nextBatch(batch)) {
                 batch.recycle();
                 return null;
             }
 
-            return batch.convertAndGetIterator(rowsReturnedBefore);
+            return batch.convertAndGetIterator();
         }
 
         /** Advances to the next batch of rows. Returns false if there are no more. */
@@ -379,10 +361,6 @@ public class ParquetReaderFactory implements BulkFormat<RowData, FileSourceSplit
         return new ParquetReaderBatch(writableVectors, columnarBatch, recycler);
     }
 
-    /**
-     * Reader batch that provides writing and reading capabilities. Provides {@link RecordIterator}
-     * reading interface from {@link #convertAndGetIterator(long)}.
-     */
     private static class ParquetReaderBatch {
 
         private final WritableColumnVector[] writableVectors;
@@ -398,22 +376,16 @@ public class ParquetReaderFactory implements BulkFormat<RowData, FileSourceSplit
             this.writableVectors = writableVectors;
             this.columnarBatch = columnarBatch;
             this.recycler = recycler;
-            this.result =
-                    new ColumnarRowIterator(new ColumnarRowData(columnarBatch), this::recycle);
+            this.result = new ColumnarRowIterator(new ColumnarRow(columnarBatch), this::recycle);
         }
 
         public void recycle() {
             recycler.recycle(this);
         }
 
-        public RecordIterator<RowData> convertAndGetIterator(long rowsReturned) {
-            result.set(columnarBatch.getNumRows(), rowsReturned);
+        public RecordIterator<InternalRow> convertAndGetIterator() {
+            result.set(columnarBatch.getNumRows());
             return result;
         }
-    }
-
-    @Override
-    public TypeInformation<RowData> getProducedType() {
-        throw new UnsupportedOperationException();
     }
 }

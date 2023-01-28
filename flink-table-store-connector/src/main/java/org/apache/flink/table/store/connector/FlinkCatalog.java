@@ -19,6 +19,7 @@
 package org.apache.flink.table.store.connector;
 
 import org.apache.flink.annotation.VisibleForTesting;
+import org.apache.flink.table.api.TableSchema;
 import org.apache.flink.table.catalog.AbstractCatalog;
 import org.apache.flink.table.catalog.CatalogBaseTable;
 import org.apache.flink.table.catalog.CatalogDatabase;
@@ -27,6 +28,7 @@ import org.apache.flink.table.catalog.CatalogFunction;
 import org.apache.flink.table.catalog.CatalogPartition;
 import org.apache.flink.table.catalog.CatalogPartitionSpec;
 import org.apache.flink.table.catalog.CatalogTable;
+import org.apache.flink.table.catalog.CatalogTableImpl;
 import org.apache.flink.table.catalog.ObjectPath;
 import org.apache.flink.table.catalog.exceptions.CatalogException;
 import org.apache.flink.table.catalog.exceptions.DatabaseAlreadyExistException;
@@ -38,23 +40,32 @@ import org.apache.flink.table.catalog.exceptions.TableAlreadyExistException;
 import org.apache.flink.table.catalog.exceptions.TableNotExistException;
 import org.apache.flink.table.catalog.stats.CatalogColumnStatistics;
 import org.apache.flink.table.catalog.stats.CatalogTableStatistics;
+import org.apache.flink.table.descriptors.DescriptorProperties;
+import org.apache.flink.table.descriptors.Schema;
 import org.apache.flink.table.expressions.Expression;
 import org.apache.flink.table.factories.Factory;
 import org.apache.flink.table.store.file.catalog.Catalog;
+import org.apache.flink.table.store.file.catalog.Identifier;
 import org.apache.flink.table.store.file.schema.SchemaChange;
 import org.apache.flink.table.store.file.schema.UpdateSchema;
 import org.apache.flink.table.store.table.FileStoreTable;
 import org.apache.flink.table.store.table.Table;
+import org.apache.flink.table.types.logical.RowType;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 
+import static org.apache.flink.table.descriptors.Schema.SCHEMA;
 import static org.apache.flink.table.factories.FactoryUtil.CONNECTOR;
 import static org.apache.flink.table.store.CoreOptions.PATH;
+import static org.apache.flink.table.store.connector.LogicalTypeConversion.toDataType;
+import static org.apache.flink.table.store.connector.LogicalTypeConversion.toLogicalType;
+import static org.apache.flink.table.types.utils.TypeConversions.fromLogicalToDataType;
 
 /** Catalog for table store. */
 public class FlinkCatalog extends AbstractCatalog {
@@ -149,18 +160,18 @@ public class FlinkCatalog extends AbstractCatalog {
             throws TableNotExistException, CatalogException {
         Table table;
         try {
-            table = catalog.getTable(tablePath);
+            table = catalog.getTable(toIdentifier(tablePath));
         } catch (Catalog.TableNotExistException e) {
-            throw new TableNotExistException(getName(), e.tablePath());
+            throw new TableNotExistException(getName(), tablePath);
         }
 
         if (table instanceof FileStoreTable) {
             CatalogTable catalogTable =
-                    ((FileStoreTable) table).schema().toUpdateSchema().toCatalogTable();
+                    toCatalogTable(((FileStoreTable) table).schema().toUpdateSchema());
             // add path to source and sink
             catalogTable
                     .getOptions()
-                    .put(PATH.key(), catalog.getTableLocation(tablePath).toString());
+                    .put(PATH.key(), catalog.getTableLocation(toIdentifier(tablePath)).toString());
             return catalogTable;
         } else {
             return new SystemCatalogTable(table);
@@ -169,16 +180,16 @@ public class FlinkCatalog extends AbstractCatalog {
 
     @Override
     public boolean tableExists(ObjectPath tablePath) throws CatalogException {
-        return catalog.tableExists(tablePath);
+        return catalog.tableExists(toIdentifier(tablePath));
     }
 
     @Override
     public void dropTable(ObjectPath tablePath, boolean ignoreIfNotExists)
             throws TableNotExistException, CatalogException {
         try {
-            catalog.dropTable(tablePath, ignoreIfNotExists);
+            catalog.dropTable(toIdentifier(tablePath), ignoreIfNotExists);
         } catch (Catalog.TableNotExistException e) {
-            throw new TableNotExistException(getName(), e.tablePath());
+            throw new TableNotExistException(getName(), tablePath);
         }
     }
 
@@ -207,9 +218,11 @@ public class FlinkCatalog extends AbstractCatalog {
 
         try {
             catalog.createTable(
-                    tablePath, UpdateSchema.fromCatalogTable(catalogTable), ignoreIfExists);
+                    toIdentifier(tablePath),
+                    FlinkCatalog.fromCatalogTable(catalogTable),
+                    ignoreIfExists);
         } catch (Catalog.TableAlreadyExistException e) {
-            throw new TableAlreadyExistException(getName(), e.tablePath());
+            throw new TableAlreadyExistException(getName(), tablePath);
         } catch (Catalog.DatabaseNotExistException e) {
             throw new DatabaseNotExistException(getName(), e.database());
         }
@@ -255,9 +268,9 @@ public class FlinkCatalog extends AbstractCatalog {
                         });
 
         try {
-            catalog.alterTable(tablePath, changes, ignoreIfNotExists);
+            catalog.alterTable(toIdentifier(tablePath), changes, ignoreIfNotExists);
         } catch (Catalog.TableNotExistException e) {
-            throw new TableNotExistException(getName(), e.tablePath());
+            throw new TableNotExistException(getName(), tablePath);
         }
     }
 
@@ -300,6 +313,70 @@ public class FlinkCatalog extends AbstractCatalog {
         } catch (Exception e) {
             throw new CatalogException("Failed to close catalog " + catalog.toString(), e);
         }
+    }
+
+    private CatalogTableImpl toCatalogTable(UpdateSchema updateSchema) {
+        TableSchema schema;
+        Map<String, String> newOptions = new HashMap<>(updateSchema.options());
+
+        // try to read schema from options
+        // in the case of virtual columns and watermark
+        DescriptorProperties tableSchemaProps = new DescriptorProperties(true);
+        tableSchemaProps.putProperties(newOptions);
+        Optional<TableSchema> optional = tableSchemaProps.getOptionalTableSchema(Schema.SCHEMA);
+        if (optional.isPresent()) {
+            schema = optional.get();
+
+            // remove schema from options
+            DescriptorProperties removeProperties = new DescriptorProperties(false);
+            removeProperties.putTableSchema(SCHEMA, schema);
+            removeProperties.asMap().keySet().forEach(newOptions::remove);
+        } else {
+            TableSchema.Builder builder = TableSchema.builder();
+            for (RowType.RowField field : toLogicalType(updateSchema.rowType()).getFields()) {
+                builder.field(field.getName(), fromLogicalToDataType(field.getType()));
+            }
+            if (updateSchema.primaryKeys().size() > 0) {
+                builder.primaryKey(updateSchema.primaryKeys().toArray(new String[0]));
+            }
+
+            schema = builder.build();
+        }
+
+        return new CatalogTableImpl(
+                schema, updateSchema.partitionKeys(), newOptions, updateSchema.comment());
+    }
+
+    public static UpdateSchema fromCatalogTable(CatalogTable catalogTable) {
+        TableSchema schema = catalogTable.getSchema();
+        RowType rowType = (RowType) schema.toPhysicalRowDataType().getLogicalType();
+        List<String> primaryKeys = new ArrayList<>();
+        if (schema.getPrimaryKey().isPresent()) {
+            primaryKeys = schema.getPrimaryKey().get().getColumns();
+        }
+
+        Map<String, String> options = new HashMap<>(catalogTable.getOptions());
+
+        // Serialize virtual columns and watermark to the options
+        // This is what Flink SQL needs, the storage itself does not need them
+        if (schema.getTableColumns().stream().anyMatch(c -> !c.isPhysical())
+                || schema.getWatermarkSpecs().size() > 0) {
+            DescriptorProperties tableSchemaProps = new DescriptorProperties(true);
+            tableSchemaProps.putTableSchema(
+                    org.apache.flink.table.descriptors.Schema.SCHEMA, schema);
+            options.putAll(tableSchemaProps.asMap());
+        }
+
+        return new UpdateSchema(
+                toDataType(rowType),
+                catalogTable.getPartitionKeys(),
+                primaryKeys,
+                options,
+                catalogTable.getComment());
+    }
+
+    public static Identifier toIdentifier(ObjectPath path) {
+        return new Identifier(path.getDatabaseName(), path.getObjectName());
     }
 
     // --------------------- unsupported methods ----------------------------

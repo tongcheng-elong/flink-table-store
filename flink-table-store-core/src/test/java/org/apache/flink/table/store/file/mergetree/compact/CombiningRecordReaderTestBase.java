@@ -18,7 +18,7 @@
 
 package org.apache.flink.table.store.file.mergetree.compact;
 
-import org.apache.flink.table.runtime.generated.RecordComparator;
+import org.apache.flink.table.store.codegen.RecordComparator;
 import org.apache.flink.table.store.file.KeyValue;
 import org.apache.flink.table.store.file.utils.RecordReader;
 import org.apache.flink.table.store.file.utils.ReusingTestData;
@@ -56,8 +56,8 @@ public abstract class CombiningRecordReaderTestBase {
 
     protected List<List<ReusingTestData>> parseData(String... stringsData) {
         List<List<ReusingTestData>> readersData = new ArrayList<>();
-        for (String stringData : stringsData) {
-            readersData.add(ReusingTestData.parse(stringData));
+        for (String string : stringsData) {
+            readersData.add(ReusingTestData.parse(string));
         }
         return readersData;
     }

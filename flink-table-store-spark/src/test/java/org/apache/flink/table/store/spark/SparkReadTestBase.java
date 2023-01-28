@@ -19,23 +19,25 @@
 package org.apache.flink.table.store.spark;
 
 import org.apache.flink.core.fs.Path;
-import org.apache.flink.table.data.GenericArrayData;
-import org.apache.flink.table.data.GenericRowData;
-import org.apache.flink.table.data.StringData;
-import org.apache.flink.table.store.file.schema.DataField;
-import org.apache.flink.table.store.file.schema.RowDataType;
+import org.apache.flink.table.store.data.BinaryString;
+import org.apache.flink.table.store.data.GenericRow;
 import org.apache.flink.table.store.file.schema.TableSchema;
+import org.apache.flink.table.store.table.FileStoreTable;
 import org.apache.flink.table.store.table.FileStoreTableFactory;
-import org.apache.flink.table.types.logical.ArrayType;
-import org.apache.flink.table.types.logical.BigIntType;
-import org.apache.flink.table.types.logical.BooleanType;
-import org.apache.flink.table.types.logical.DoubleType;
-import org.apache.flink.table.types.logical.IntType;
-import org.apache.flink.table.types.logical.RowType;
-import org.apache.flink.table.types.logical.VarCharType;
-import org.apache.flink.types.RowKind;
+import org.apache.flink.table.store.table.sink.TableCommit;
+import org.apache.flink.table.store.table.sink.TableWrite;
+import org.apache.flink.table.store.types.ArrayType;
+import org.apache.flink.table.store.types.BigIntType;
+import org.apache.flink.table.store.types.BooleanType;
+import org.apache.flink.table.store.types.DataField;
+import org.apache.flink.table.store.types.DoubleType;
+import org.apache.flink.table.store.types.IntType;
+import org.apache.flink.table.store.types.RowKind;
+import org.apache.flink.table.store.types.RowType;
+import org.apache.flink.table.store.types.VarCharType;
 
 import org.apache.commons.io.FileUtils;
+import org.apache.commons.lang3.StringUtils;
 import org.apache.spark.sql.Dataset;
 import org.apache.spark.sql.Row;
 import org.apache.spark.sql.SparkSession;
@@ -47,11 +49,14 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.util.Arrays;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicLong;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 /** Base tests for spark read. */
 public abstract class SparkReadTestBase {
+    private static final String COMMIT_USER = "user";
+    private static final AtomicLong COMMIT_IDENTIFIER = new AtomicLong(0);
 
     private static File warehouse = null;
 
@@ -71,111 +76,73 @@ public abstract class SparkReadTestBase {
         spark = SparkSession.builder().master("local[2]").getOrCreate();
         spark.conf().set("spark.sql.catalog.tablestore", SparkCatalog.class.getName());
         spark.conf().set("spark.sql.catalog.tablestore.warehouse", warehousePath.toString());
+        spark.sql("USE tablestore");
+        spark.sql("CREATE NAMESPACE default");
 
         // flink sink
         tablePath1 = new Path(warehousePath, "default.db/t1");
-        SimpleTableTestHelper testHelper1 = new SimpleTableTestHelper(tablePath1, rowType1());
-        testHelper1.write(GenericRowData.of(1, 2L, StringData.fromString("1")));
-        testHelper1.write(GenericRowData.of(3, 4L, StringData.fromString("2")));
-        testHelper1.write(GenericRowData.of(5, 6L, StringData.fromString("3")));
-        testHelper1.write(GenericRowData.ofKind(RowKind.DELETE, 3, 4L, StringData.fromString("2")));
-        testHelper1.commit();
+        createTable("t1");
+        writeTable(
+                "t1",
+                GenericRow.of(1, 2L, BinaryString.fromString("1")),
+                GenericRow.of(3, 4L, BinaryString.fromString("2")),
+                GenericRow.of(5, 6L, BinaryString.fromString("3")),
+                GenericRow.ofKind(RowKind.DELETE, 3, 4L, BinaryString.fromString("2")));
 
         // a int not null
         // b array<varchar> not null
         // c row<row<double, array<boolean> not null> not null, bigint> not null
         tablePath2 = new Path(warehousePath, "default.db/t2");
-        SimpleTableTestHelper testHelper2 = new SimpleTableTestHelper(tablePath2, rowType2());
-        testHelper2.write(
-                GenericRowData.of(
-                        1,
-                        new GenericArrayData(
-                                new StringData[] {
-                                    StringData.fromString("AAA"), StringData.fromString("BBB")
-                                }),
-                        GenericRowData.of(
-                                GenericRowData.of(1.0d, new GenericArrayData(new Boolean[] {null})),
-                                1L)));
-        testHelper2.write(
-                GenericRowData.of(
-                        2,
-                        new GenericArrayData(
-                                new StringData[] {
-                                    StringData.fromString("CCC"), StringData.fromString("DDD")
-                                }),
-                        GenericRowData.of(
-                                GenericRowData.of(null, new GenericArrayData(new Boolean[] {true})),
-                                null)));
-        testHelper2.commit();
-
-        testHelper2.write(
-                GenericRowData.of(
-                        3,
-                        new GenericArrayData(new StringData[] {null, null}),
-                        GenericRowData.of(
-                                GenericRowData.of(
-                                        2.0d, new GenericArrayData(new boolean[] {true, false})),
-                                2L)));
-
-        testHelper2.write(
-                GenericRowData.of(
-                        4,
-                        new GenericArrayData(new StringData[] {null, StringData.fromString("EEE")}),
-                        GenericRowData.of(
-                                GenericRowData.of(
-                                        3.0d,
-                                        new GenericArrayData(new Boolean[] {true, false, true})),
-                                3L)));
-        testHelper2.commit();
-    }
-
-    protected static SimpleTableTestHelper createTestHelper(Path tablePath) throws Exception {
-        RowType rowType =
-                new RowType(
-                        Arrays.asList(
-                                new RowType.RowField("a", new IntType(false)),
-                                new RowType.RowField("b", new BigIntType()),
-                                new RowType.RowField("c", new VarCharType())));
-        return new SimpleTableTestHelper(tablePath, rowType);
-    }
-
-    protected static SimpleTableTestHelper createTestHelperWithoutDDL(Path tablePath)
-            throws Exception {
-        return new SimpleTableTestHelper(tablePath);
+        spark.sql(
+                "CREATE TABLE tablestore.default.t2 (a INT NOT NULL COMMENT 'comment about a', b ARRAY<STRING> NOT NULL, c STRUCT<c1: STRUCT<c11: DOUBLE, c12: ARRAY<BOOLEAN> NOT NULL> NOT NULL, c2: BIGINT COMMENT 'comment about c2'> NOT NULL COMMENT 'comment about c') TBLPROPERTIES ('file.format'='avro')");
+        //        createTable1("t2");
+        writeTable(
+                "t2",
+                "(1, array('AAA', 'BBB'), struct(struct(1.0d, array(null)), 1L))",
+                "(2, array('CCC', 'DDD'), struct(struct(null, array(true)), null))");
+        writeTable(
+                "t2",
+                "(3, array(null, null), struct(struct(2.0d, array(true, false)), 2L))",
+                "(4, array(null, 'EEE'), struct(struct(3.0d, array(true, false, true)), 3L))");
     }
 
     private static RowType rowType1() {
         return new RowType(
                 Arrays.asList(
-                        new RowType.RowField("a", new IntType(false)),
-                        new RowType.RowField("b", new BigIntType()),
-                        new RowType.RowField("c", new VarCharType())));
+                        new DataField(0, "a", new IntType(false)),
+                        new DataField(1, "b", new BigIntType()),
+                        new DataField(2, "c", new VarCharType())));
     }
 
     private static RowType rowType2() {
         return new RowType(
                 Arrays.asList(
-                        new RowType.RowField("a", new IntType(false), "comment about a"),
-                        new RowType.RowField("b", new ArrayType(false, new VarCharType())),
-                        new RowType.RowField(
+                        new DataField(0, "a", new IntType(false), "comment about a"),
+                        new DataField(1, "b", new ArrayType(false, new VarCharType())),
+                        new DataField(
+                                2,
                                 "c",
                                 new RowType(
                                         false,
                                         Arrays.asList(
-                                                new RowType.RowField(
+                                                new DataField(
+                                                        3,
                                                         "c1",
                                                         new RowType(
                                                                 false,
                                                                 Arrays.asList(
-                                                                        new RowType.RowField(
+                                                                        new DataField(
+                                                                                4,
                                                                                 "c11",
                                                                                 new DoubleType()),
-                                                                        new RowType.RowField(
+                                                                        new DataField(
+                                                                                5,
                                                                                 "c12",
                                                                                 new ArrayType(
                                                                                         false,
                                                                                         new BooleanType()))))),
-                                                new RowType.RowField(
+                                                new DataField(
+                                                        6,
                                                         "c2",
                                                         new BigIntType(),
                                                         "comment about c2"))),
@@ -213,7 +180,7 @@ public abstract class SparkReadTestBase {
     }
 
     protected boolean fieldIsNullable(DataField field) {
-        return field.type().logicalType().isNullable();
+        return field.type().isNullable();
     }
 
     protected DataField getField(TableSchema schema, int index) {
@@ -221,10 +188,44 @@ public abstract class SparkReadTestBase {
     }
 
     protected DataField getNestedField(DataField field, int index) {
-        if (field.type() instanceof RowDataType) {
-            RowDataType rowDataType = (RowDataType) field.type();
-            return rowDataType.fields().get(index);
+        if (field.type() instanceof org.apache.flink.table.store.types.RowType) {
+            org.apache.flink.table.store.types.RowType rowDataType =
+                    (org.apache.flink.table.store.types.RowType) field.type();
+            return rowDataType.getFields().get(index);
         }
         throw new IllegalArgumentException();
+    }
+
+    /**
+     * Create table with fields: a->int not null, b->bigint, c->string. orc is shaded, can not find
+     * shaded classes in ide, we use avro here.
+     *
+     * @param tableName the given table name
+     */
+    protected static void createTable(String tableName) {
+        spark.sql(
+                String.format(
+                        "CREATE TABLE tablestore.default.%s (a INT NOT NULL, b BIGINT, c STRING) TBLPROPERTIES ('file.format'='avro')",
+                        tableName));
+    }
+
+    private static void writeTable(String tableName, GenericRow... rows) throws Exception {
+        FileStoreTable fileStoreTable =
+                FileStoreTableFactory.create(
+                        new Path(warehousePath, String.format("default.db/%s", tableName)));
+        TableWrite writer = fileStoreTable.newWrite(COMMIT_USER);
+        TableCommit commit = fileStoreTable.newCommit(COMMIT_USER);
+        for (GenericRow row : rows) {
+            writer.write(row);
+        }
+        long commitIdentifier = COMMIT_IDENTIFIER.getAndIncrement();
+        commit.commit(commitIdentifier, writer.prepareCommit(true, commitIdentifier));
+    }
+
+    protected static void writeTable(String tableName, String... values) {
+        spark.sql(
+                String.format(
+                        "INSERT INTO tablestore.default.%s VALUES %s",
+                        tableName, StringUtils.join(values, ",")));
     }
 }

@@ -18,12 +18,8 @@
 
 package org.apache.flink.table.store.file.schema;
 
-import org.apache.flink.table.api.TableSchema;
-import org.apache.flink.table.catalog.CatalogTable;
-import org.apache.flink.table.catalog.CatalogTableImpl;
-import org.apache.flink.table.descriptors.DescriptorProperties;
-import org.apache.flink.table.descriptors.Schema;
-import org.apache.flink.table.types.logical.RowType;
+import org.apache.flink.table.store.types.DataField;
+import org.apache.flink.table.store.types.RowType;
 import org.apache.flink.util.Preconditions;
 
 import java.util.ArrayList;
@@ -31,11 +27,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import java.util.Set;
-
-import static org.apache.flink.table.descriptors.Schema.SCHEMA;
-import static org.apache.flink.table.types.utils.TypeConversions.fromLogicalToDataType;
 
 /** A update schema. */
 public class UpdateSchema {
@@ -109,14 +101,15 @@ public class UpdateSchema {
                 partitionKeys);
 
         // primary key should not nullable
-        List<RowType.RowField> fields = new ArrayList<>();
-        for (RowType.RowField field : rowType.getFields()) {
-            if (pkSet.contains(field.getName()) && field.getType().isNullable()) {
+        List<DataField> fields = new ArrayList<>();
+        for (DataField field : rowType.getFields()) {
+            if (pkSet.contains(field.name()) && field.type().isNullable()) {
                 fields.add(
-                        new RowType.RowField(
-                                field.getName(),
-                                field.getType().copy(false),
-                                field.getDescription().orElse(null)));
+                        new DataField(
+                                field.id(),
+                                field.name(),
+                                field.type().copy(false),
+                                field.description()));
             } else {
                 fields.add(field);
             }
@@ -138,64 +131,5 @@ public class UpdateSchema {
                 + ", comment="
                 + comment
                 + '}';
-    }
-
-    public CatalogTableImpl toCatalogTable() {
-        TableSchema schema;
-        Map<String, String> newOptions = new HashMap<>(options);
-
-        // try to read schema from options
-        // in the case of virtual columns and watermark
-        DescriptorProperties tableSchemaProps = new DescriptorProperties(true);
-        tableSchemaProps.putProperties(newOptions);
-        Optional<TableSchema> optional = tableSchemaProps.getOptionalTableSchema(Schema.SCHEMA);
-        if (optional.isPresent()) {
-            schema = optional.get();
-
-            // remove schema from options
-            DescriptorProperties removeProperties = new DescriptorProperties(false);
-            removeProperties.putTableSchema(SCHEMA, schema);
-            removeProperties.asMap().keySet().forEach(newOptions::remove);
-        } else {
-            TableSchema.Builder builder = TableSchema.builder();
-            for (RowType.RowField field : rowType.getFields()) {
-                builder.field(field.getName(), fromLogicalToDataType(field.getType()));
-            }
-            if (primaryKeys.size() > 0) {
-                builder.primaryKey(primaryKeys.toArray(new String[0]));
-            }
-
-            schema = builder.build();
-        }
-
-        return new CatalogTableImpl(schema, partitionKeys, newOptions, comment);
-    }
-
-    public static UpdateSchema fromCatalogTable(CatalogTable catalogTable) {
-        TableSchema schema = catalogTable.getSchema();
-        RowType rowType = (RowType) schema.toPhysicalRowDataType().getLogicalType();
-        List<String> primaryKeys = new ArrayList<>();
-        if (schema.getPrimaryKey().isPresent()) {
-            primaryKeys = schema.getPrimaryKey().get().getColumns();
-        }
-
-        Map<String, String> options = new HashMap<>(catalogTable.getOptions());
-
-        // Serialize virtual columns and watermark to the options
-        // This is what Flink SQL needs, the storage itself does not need them
-        if (schema.getTableColumns().stream().anyMatch(c -> !c.isPhysical())
-                || schema.getWatermarkSpecs().size() > 0) {
-            DescriptorProperties tableSchemaProps = new DescriptorProperties(true);
-            tableSchemaProps.putTableSchema(
-                    org.apache.flink.table.descriptors.Schema.SCHEMA, schema);
-            options.putAll(tableSchemaProps.asMap());
-        }
-
-        return new UpdateSchema(
-                rowType,
-                catalogTable.getPartitionKeys(),
-                primaryKeys,
-                options,
-                catalogTable.getComment());
     }
 }

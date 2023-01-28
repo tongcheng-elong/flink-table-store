@@ -18,16 +18,14 @@
 
 package org.apache.flink.table.store.file.sort;
 
-import org.apache.flink.runtime.io.compression.BlockCompressionFactory;
-import org.apache.flink.runtime.io.disk.ChannelReaderInputViewIterator;
-import org.apache.flink.runtime.io.disk.iomanager.AbstractChannelReaderInputView;
-import org.apache.flink.runtime.io.disk.iomanager.IOManager;
-import org.apache.flink.runtime.memory.AbstractPagedOutputView;
-import org.apache.flink.table.data.binary.BinaryRowData;
-import org.apache.flink.table.runtime.operators.sort.AbstractBinaryExternalMerger;
-import org.apache.flink.table.runtime.operators.sort.SpillChannelManager;
-import org.apache.flink.table.runtime.typeutils.BinaryRowDataSerializer;
 import org.apache.flink.table.store.codegen.RecordComparator;
+import org.apache.flink.table.store.data.AbstractPagedOutputView;
+import org.apache.flink.table.store.data.BinaryRow;
+import org.apache.flink.table.store.data.BinaryRowSerializer;
+import org.apache.flink.table.store.file.compression.BlockCompressionFactory;
+import org.apache.flink.table.store.file.disk.ChannelReaderInputView;
+import org.apache.flink.table.store.file.disk.ChannelReaderInputViewIterator;
+import org.apache.flink.table.store.file.disk.IOManager;
 import org.apache.flink.util.MutableObjectIterator;
 
 import java.io.IOException;
@@ -35,10 +33,10 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 
-/** Record merger for sort of BinaryRowData. Copied from Flink. */
-public class BinaryExternalMerger extends AbstractBinaryExternalMerger<BinaryRowData> {
+/** Record merger for sort of BinaryRow. Copied from Flink. */
+public class BinaryExternalMerger extends AbstractBinaryExternalMerger<BinaryRow> {
 
-    private final BinaryRowDataSerializer serializer;
+    private final BinaryRowSerializer serializer;
     private final RecordComparator comparator;
 
     public BinaryExternalMerger(
@@ -46,9 +44,8 @@ public class BinaryExternalMerger extends AbstractBinaryExternalMerger<BinaryRow
             int pageSize,
             int maxFanIn,
             SpillChannelManager channelManager,
-            BinaryRowDataSerializer serializer,
+            BinaryRowSerializer serializer,
             RecordComparator comparator,
-            boolean compressionEnable,
             BlockCompressionFactory compressionCodecFactory,
             int compressionBlockSize) {
         super(
@@ -56,7 +53,6 @@ public class BinaryExternalMerger extends AbstractBinaryExternalMerger<BinaryRow
                 pageSize,
                 maxFanIn,
                 channelManager,
-                compressionEnable,
                 compressionCodecFactory,
                 compressionBlockSize);
         this.serializer = serializer;
@@ -64,19 +60,19 @@ public class BinaryExternalMerger extends AbstractBinaryExternalMerger<BinaryRow
     }
 
     @Override
-    protected MutableObjectIterator<BinaryRowData> channelReaderInputViewIterator(
-            AbstractChannelReaderInputView inView) {
+    protected MutableObjectIterator<BinaryRow> channelReaderInputViewIterator(
+            ChannelReaderInputView inView) {
         return new ChannelReaderInputViewIterator<>(inView, null, serializer.duplicate());
     }
 
     @Override
-    protected Comparator<BinaryRowData> mergeComparator() {
+    protected Comparator<BinaryRow> mergeComparator() {
         return comparator::compare;
     }
 
     @Override
-    protected List<BinaryRowData> mergeReusedEntries(int size) {
-        ArrayList<BinaryRowData> reused = new ArrayList<>(size);
+    protected List<BinaryRow> mergeReusedEntries(int size) {
+        ArrayList<BinaryRow> reused = new ArrayList<>(size);
         for (int i = 0; i < size; i++) {
             reused.add(serializer.createInstance());
         }
@@ -85,10 +81,10 @@ public class BinaryExternalMerger extends AbstractBinaryExternalMerger<BinaryRow
 
     @Override
     protected void writeMergingOutput(
-            MutableObjectIterator<BinaryRowData> mergeIterator, AbstractPagedOutputView output)
+            MutableObjectIterator<BinaryRow> mergeIterator, AbstractPagedOutputView output)
             throws IOException {
         // read the merged stream and write the data back
-        BinaryRowData rec = serializer.createInstance();
+        BinaryRow rec = serializer.createInstance();
         while ((rec = mergeIterator.next(rec)) != null) {
             serializer.serialize(rec, output);
         }

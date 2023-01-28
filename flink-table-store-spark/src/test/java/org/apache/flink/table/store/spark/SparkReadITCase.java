@@ -19,18 +19,14 @@
 package org.apache.flink.table.store.spark;
 
 import org.apache.flink.core.fs.Path;
-import org.apache.flink.table.data.GenericArrayData;
-import org.apache.flink.table.data.GenericRowData;
-import org.apache.flink.table.data.binary.BinaryStringData;
-import org.apache.flink.table.store.file.schema.ArrayDataType;
-import org.apache.flink.table.store.file.schema.AtomicDataType;
-import org.apache.flink.table.store.file.schema.DataField;
-import org.apache.flink.table.store.file.schema.DataType;
 import org.apache.flink.table.store.file.schema.TableSchema;
 import org.apache.flink.table.store.table.FileStoreTableFactory;
-import org.apache.flink.table.types.logical.BigIntType;
-import org.apache.flink.table.types.logical.DoubleType;
-import org.apache.flink.table.types.logical.VarCharType;
+import org.apache.flink.table.store.types.ArrayType;
+import org.apache.flink.table.store.types.BigIntType;
+import org.apache.flink.table.store.types.DataField;
+import org.apache.flink.table.store.types.DataType;
+import org.apache.flink.table.store.types.DoubleType;
+import org.apache.flink.table.store.types.VarCharType;
 
 import org.apache.spark.sql.AnalysisException;
 import org.apache.spark.sql.Dataset;
@@ -42,7 +38,6 @@ import org.junit.jupiter.api.Test;
 
 import java.io.File;
 import java.util.Arrays;
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -57,18 +52,16 @@ public class SparkReadITCase extends SparkReadTestBase {
 
     @Test
     public void testNormal() {
-        innerTestSimpleType(spark.read().format("tablestore").load(tablePath1.toString()));
+        innerTestSimpleType(spark.table("tablestore.default.t1"));
 
-        innerTestNestedType(spark.read().format("tablestore").load(tablePath2.toString()));
+        innerTestNestedType(spark.table("tablestore.default.t2"));
     }
 
     @Test
     public void testFilterPushDown() {
-        innerTestSimpleTypeFilterPushDown(
-                spark.read().format("tablestore").load(tablePath1.toString()));
+        innerTestSimpleTypeFilterPushDown(spark.table("tablestore.default.t1"));
 
-        innerTestNestedTypeFilterPushDown(
-                spark.read().format("tablestore").load(tablePath2.toString()));
+        innerTestNestedTypeFilterPushDown(spark.table("tablestore.default.t2"));
     }
 
     @Test
@@ -99,10 +92,10 @@ public class SparkReadITCase extends SparkReadTestBase {
         assertThat(fieldsList.stream().map(Object::toString).collect(Collectors.toList()))
                 .containsExactlyInAnyOrder(
                         "[{\"id\":0,\"name\":\"a\",\"type\":\"BIGINT NOT NULL\"},"
-                                + "{\"id\":1,\"name\":\"b\",\"type\":\"VARCHAR(2147483647)\"}]",
+                                + "{\"id\":1,\"name\":\"b\",\"type\":\"STRING\"}]",
                         "[{\"id\":0,\"name\":\"a\",\"type\":\"BIGINT NOT NULL\"},"
-                                + "{\"id\":1,\"name\":\"b\",\"type\":\"VARCHAR(2147483647)\"},"
-                                + "{\"id\":2,\"name\":\"c\",\"type\":\"VARCHAR(2147483647)\"}]");
+                                + "{\"id\":1,\"name\":\"b\",\"type\":\"STRING\"},"
+                                + "{\"id\":2,\"name\":\"c\",\"type\":\"STRING\"}]");
     }
 
     @Test
@@ -228,8 +221,8 @@ public class SparkReadITCase extends SparkReadTestBase {
         innerTest("MyTable6", false, true, true);
     }
 
-    private void innerTest(String tableName, boolean hasPk, boolean partitioned, boolean appendOnly)
-            throws Exception {
+    private void innerTest(
+            String tableName, boolean hasPk, boolean partitioned, boolean appendOnly) {
         spark.sql("USE tablestore");
         String ddlTemplate =
                 "CREATE TABLE default.%s (\n"
@@ -244,18 +237,17 @@ public class SparkReadITCase extends SparkReadTestBase {
                         + "TBLPROPERTIES (%s)";
         Map<String, String> tableProperties = new HashMap<>();
         tableProperties.put("foo", "bar");
+        tableProperties.put("file.format", "avro");
         List<String> columns =
                 Arrays.asList("order_id", "buyer_id", "coupon_info", "order_amount", "dt", "hh");
         List<DataType> types =
                 Arrays.asList(
-                        new AtomicDataType(new BigIntType(false)),
-                        new AtomicDataType(new BigIntType(false)),
-                        new ArrayDataType(
-                                false,
-                                new AtomicDataType(new VarCharType(true, VarCharType.MAX_LENGTH))),
-                        new AtomicDataType(new DoubleType(false)),
-                        new AtomicDataType(new VarCharType(false, VarCharType.MAX_LENGTH)),
-                        new AtomicDataType(new VarCharType(false, VarCharType.MAX_LENGTH)));
+                        new BigIntType(false),
+                        new BigIntType(false),
+                        new ArrayType(false, VarCharType.STRING_TYPE),
+                        new DoubleType(false),
+                        VarCharType.stringType(false),
+                        VarCharType.stringType(false));
         List<DataField> fields =
                 IntStream.range(0, columns.size())
                         .boxed()
@@ -342,29 +334,9 @@ public class SparkReadITCase extends SparkReadTestBase {
 
         assertThat(schema.comment()).isEqualTo("table comment");
 
-        SimpleTableTestHelper testHelper =
-                new SimpleTableTestHelper(
-                        tablePath,
-                        schema.logicalRowType(),
-                        partitioned ? Arrays.asList("dt", "hh") : Collections.emptyList(),
-                        hasPk
-                                ? partitioned
-                                        ? Arrays.asList("order_id", "dt", "hh")
-                                        : Collections.singletonList("order_id")
-                                : Collections.emptyList());
-        testHelper.write(
-                GenericRowData.of(
-                        1L,
-                        10L,
-                        new GenericArrayData(
-                                new BinaryStringData[] {
-                                    BinaryStringData.fromString("loyalty_discount"),
-                                    BinaryStringData.fromString("shipping_discount")
-                                }),
-                        199.0d,
-                        BinaryStringData.fromString("2022-07-20"),
-                        BinaryStringData.fromString("12")));
-        testHelper.commit();
+        writeTable(
+                tableName,
+                "(1L, 10L, array('loyalty_discount', 'shipping_discount'), 199.0d, '2022-07-20', '12')");
 
         Dataset<Row> dataset = spark.read().format("tablestore").load(tablePath.toString());
         assertThat(dataset.select("order_id", "buyer_id", "dt").collectAsList().toString())
@@ -489,5 +461,24 @@ public class SparkReadITCase extends SparkReadTestBase {
         assertThat(results.toString())
                 .isEqualTo(
                         "[[3,WrappedArray(true, false),2], [4,WrappedArray(true, false, true),3]]");
+    }
+
+    @Test
+    public void testCreateNestedField() {
+        spark.sql(
+                "CREATE TABLE tablestore.default.nested_table ( a INT, b STRUCT<b1: STRUCT<b11: INT, b12 INT>, b2 BIGINT>)");
+        assertThat(
+                        spark.sql("SHOW CREATE TABLE tablestore.default.nested_table")
+                                .collectAsList()
+                                .toString())
+                .isEqualTo(
+                        String.format(
+                                "[[CREATE TABLE nested_table (\n"
+                                        + "  `a` INT,\n"
+                                        + "  `b` STRUCT<`b1`: STRUCT<`b11`: INT, `b12`: INT>, `b2`: BIGINT>)\n"
+                                        + "TBLPROPERTIES(\n"
+                                        + "  'path' = '%s')\n"
+                                        + "]]",
+                                new Path(warehousePath, "default.db/nested_table")));
     }
 }

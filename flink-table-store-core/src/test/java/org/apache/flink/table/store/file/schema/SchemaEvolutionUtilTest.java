@@ -18,11 +18,13 @@
 
 package org.apache.flink.table.store.file.schema;
 
-import org.apache.flink.table.api.DataTypes;
 import org.apache.flink.table.store.file.predicate.IsNotNull;
 import org.apache.flink.table.store.file.predicate.IsNull;
 import org.apache.flink.table.store.file.predicate.LeafPredicate;
 import org.apache.flink.table.store.file.predicate.Predicate;
+import org.apache.flink.table.store.types.DataField;
+import org.apache.flink.table.store.types.DataTypes;
+import org.apache.flink.table.store.types.IntType;
 import org.apache.flink.table.store.utils.Projection;
 
 import org.junit.jupiter.api.Test;
@@ -38,30 +40,29 @@ import static org.assertj.core.api.Assertions.assertThat;
 public class SchemaEvolutionUtilTest {
     private final List<DataField> keyFields =
             Arrays.asList(
-                    new DataField(0, "key_1", new AtomicDataType(DataTypes.INT().getLogicalType())),
-                    new DataField(1, "key_2", new AtomicDataType(DataTypes.INT().getLogicalType())),
-                    new DataField(
-                            2, "key_3", new AtomicDataType(DataTypes.INT().getLogicalType())));
+                    new DataField(0, "key_1", new IntType()),
+                    new DataField(1, "key_2", new IntType()),
+                    new DataField(2, "key_3", new IntType()));
     private final List<DataField> dataFields =
             Arrays.asList(
-                    new DataField(0, "a", new AtomicDataType(DataTypes.INT().getLogicalType())),
-                    new DataField(1, "b", new AtomicDataType(DataTypes.INT().getLogicalType())),
-                    new DataField(2, "c", new AtomicDataType(DataTypes.INT().getLogicalType())),
-                    new DataField(3, "d", new AtomicDataType(DataTypes.INT().getLogicalType())));
+                    new DataField(0, "a", new IntType()),
+                    new DataField(1, "b", new IntType()),
+                    new DataField(2, "c", new IntType()),
+                    new DataField(3, "d", new IntType()));
     private final List<DataField> tableFields1 =
             Arrays.asList(
-                    new DataField(1, "c", new AtomicDataType(DataTypes.INT().getLogicalType())),
-                    new DataField(3, "a", new AtomicDataType(DataTypes.INT().getLogicalType())),
-                    new DataField(5, "d", new AtomicDataType(DataTypes.INT().getLogicalType())),
-                    new DataField(6, "e", new AtomicDataType(DataTypes.INT().getLogicalType())));
+                    new DataField(1, "c", new IntType()),
+                    new DataField(3, "a", new IntType()),
+                    new DataField(5, "d", new IntType()),
+                    new DataField(6, "e", new IntType()));
     private final List<DataField> tableFields2 =
             Arrays.asList(
-                    new DataField(1, "c", new AtomicDataType(DataTypes.INT().getLogicalType())),
-                    new DataField(3, "d", new AtomicDataType(DataTypes.INT().getLogicalType())),
-                    new DataField(5, "f", new AtomicDataType(DataTypes.INT().getLogicalType())),
-                    new DataField(7, "a", new AtomicDataType(DataTypes.INT().getLogicalType())),
-                    new DataField(8, "b", new AtomicDataType(DataTypes.INT().getLogicalType())),
-                    new DataField(9, "e", new AtomicDataType(DataTypes.INT().getLogicalType())));
+                    new DataField(1, "c", new IntType()),
+                    new DataField(3, "d", new IntType()),
+                    new DataField(5, "f", new IntType()),
+                    new DataField(7, "a", new IntType()),
+                    new DataField(8, "b", new IntType()),
+                    new DataField(9, "e", new IntType()));
 
     @Test
     public void testCreateIndexMapping() {
@@ -159,27 +160,15 @@ public class SchemaEvolutionUtilTest {
         List<Predicate> predicates = new ArrayList<>();
         predicates.add(
                 new LeafPredicate(
-                        IsNull.INSTANCE,
-                        DataTypes.INT().getLogicalType(),
-                        0,
-                        "c",
-                        Collections.emptyList()));
+                        IsNull.INSTANCE, DataTypes.INT(), 0, "c", Collections.emptyList()));
         // Field 9->e is not exist in data
         predicates.add(
                 new LeafPredicate(
-                        IsNotNull.INSTANCE,
-                        DataTypes.INT().getLogicalType(),
-                        9,
-                        "e",
-                        Collections.emptyList()));
+                        IsNotNull.INSTANCE, DataTypes.INT(), 9, "e", Collections.emptyList()));
         // Field 7->a is not exist in data
         predicates.add(
                 new LeafPredicate(
-                        IsNull.INSTANCE,
-                        DataTypes.INT().getLogicalType(),
-                        7,
-                        "a",
-                        Collections.emptyList()));
+                        IsNull.INSTANCE, DataTypes.INT(), 7, "a", Collections.emptyList()));
 
         List<Predicate> filters =
                 SchemaEvolutionUtil.createDataFilters(tableFields2, dataFields, predicates);

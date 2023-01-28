@@ -19,16 +19,16 @@
 package org.apache.flink.table.store.file.schema;
 
 import org.apache.flink.core.fs.Path;
-import org.apache.flink.table.api.TableException;
 import org.apache.flink.table.store.CoreOptions;
 import org.apache.flink.table.store.file.WriteMode;
 import org.apache.flink.table.store.file.utils.FailingAtomicRenameFileSystem;
-import org.apache.flink.table.types.logical.BigIntType;
-import org.apache.flink.table.types.logical.DoubleType;
-import org.apache.flink.table.types.logical.IntType;
-import org.apache.flink.table.types.logical.MapType;
-import org.apache.flink.table.types.logical.RowType;
-import org.apache.flink.table.types.logical.VarCharType;
+import org.apache.flink.table.store.types.BigIntType;
+import org.apache.flink.table.store.types.DataField;
+import org.apache.flink.table.store.types.DoubleType;
+import org.apache.flink.table.store.types.IntType;
+import org.apache.flink.table.store.types.MapType;
+import org.apache.flink.table.store.types.RowType;
+import org.apache.flink.table.store.types.VarCharType;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -99,9 +99,12 @@ public class SchemaManagerTest {
 
         List<DataField> fields =
                 Arrays.asList(
-                        new DataField(0, "f0", new AtomicDataType(new IntType(false))),
-                        new DataField(1, "f1", new AtomicDataType(new BigIntType(false))),
-                        new DataField(2, "f2", new AtomicDataType(new VarCharType())));
+                        new DataField(
+                                0, "f0", new org.apache.flink.table.store.types.IntType(false)),
+                        new DataField(
+                                1, "f1", new org.apache.flink.table.store.types.BigIntType(false)),
+                        new DataField(
+                                2, "f2", new org.apache.flink.table.store.types.VarCharType()));
 
         assertThat(latest.isPresent()).isTrue();
         assertThat(tableSchema).isEqualTo(latest.get());
@@ -233,9 +236,12 @@ public class SchemaManagerTest {
 
         List<DataField> fields =
                 Arrays.asList(
-                        new DataField(0, "f0", new AtomicDataType(new DoubleType(false))),
-                        new DataField(1, "f1", new AtomicDataType(new BigIntType(false))),
-                        new DataField(2, "f2", new AtomicDataType(new VarCharType())));
+                        new DataField(
+                                0, "f0", new org.apache.flink.table.store.types.DoubleType(false)),
+                        new DataField(
+                                1, "f1", new org.apache.flink.table.store.types.BigIntType(false)),
+                        new DataField(
+                                2, "f2", new org.apache.flink.table.store.types.VarCharType()));
 
         assertThat(latest.isPresent()).isTrue();
         assertThat(tableSchema).isEqualTo(latest.get());
@@ -286,7 +292,7 @@ public class SchemaManagerTest {
                         () ->
                                 retryArtificialException(
                                         () -> manager.commitNewVersion(updateSchema)))
-                .isInstanceOf(TableException.class)
+                .isInstanceOf(RuntimeException.class)
                 .hasMessage(
                         "Cannot define any primary key in an append-only table. "
                                 + "Set 'write-mode'='change-log' if still want to keep the primary key definition.");

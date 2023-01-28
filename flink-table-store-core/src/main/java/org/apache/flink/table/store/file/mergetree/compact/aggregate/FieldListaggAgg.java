@@ -18,18 +18,17 @@
 
 package org.apache.flink.table.store.file.mergetree.compact.aggregate;
 
-import org.apache.flink.table.data.StringData;
-import org.apache.flink.table.data.binary.BinaryStringData;
-import org.apache.flink.table.data.binary.BinaryStringDataUtil;
-import org.apache.flink.table.types.logical.LogicalType;
+import org.apache.flink.table.store.data.BinaryString;
+import org.apache.flink.table.store.types.DataType;
+import org.apache.flink.table.store.utils.StringUtils;
 
 /** listagg aggregate a field of a row. */
 public class FieldListaggAgg extends FieldAggregator {
     // TODO: make it configurable by with clause
     public static final String DELIMITER = ",";
 
-    public FieldListaggAgg(LogicalType logicalType) {
-        super(logicalType);
+    public FieldListaggAgg(DataType dataType) {
+        super(dataType);
     }
 
     @Override
@@ -43,13 +42,11 @@ public class FieldListaggAgg extends FieldAggregator {
             switch (fieldType.getTypeRoot()) {
                 case VARCHAR:
                     // TODO: ensure not VARCHAR(n)
-                    StringData mergeFieldSD = (StringData) accumulator;
-                    StringData inFieldSD = (StringData) inputField;
+                    BinaryString mergeFieldSD = (BinaryString) accumulator;
+                    BinaryString inFieldSD = (BinaryString) inputField;
                     concatenate =
-                            BinaryStringDataUtil.concat(
-                                    (BinaryStringData) mergeFieldSD,
-                                    new BinaryStringData(DELIMITER),
-                                    (BinaryStringData) inFieldSD);
+                            StringUtils.concat(
+                                    mergeFieldSD, BinaryString.fromString(DELIMITER), inFieldSD);
                     break;
                 default:
                     throw new IllegalArgumentException();

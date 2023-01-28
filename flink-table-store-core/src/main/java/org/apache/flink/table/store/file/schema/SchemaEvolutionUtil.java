@@ -18,14 +18,16 @@
 
 package org.apache.flink.table.store.file.schema;
 
-import org.apache.flink.table.data.RowData;
+import org.apache.flink.table.store.data.InternalRow;
 import org.apache.flink.table.store.file.KeyValue;
 import org.apache.flink.table.store.file.casting.CastExecutor;
 import org.apache.flink.table.store.file.casting.CastExecutors;
 import org.apache.flink.table.store.file.predicate.LeafPredicate;
 import org.apache.flink.table.store.file.predicate.Predicate;
 import org.apache.flink.table.store.file.predicate.PredicateReplaceVisitor;
-import org.apache.flink.table.store.utils.ProjectedRowData;
+import org.apache.flink.table.store.types.DataField;
+import org.apache.flink.table.store.types.DataTypeFamily;
+import org.apache.flink.table.store.utils.ProjectedRow;
 
 import javax.annotation.Nullable;
 
@@ -222,8 +224,8 @@ public class SchemaEvolutionUtil {
      * directly because the field index of b in underlying is 2. We can remove the -1 field index in
      * data projection, then the result data projection is: [[0], [2]].
      *
-     * <p>We create {@link RowData} for 1->a, 3->c after projecting them from underlying data, then
-     * create {@link ProjectedRowData} with a index mapping and return null for 6->b in table
+     * <p>We create {@link InternalRow} for 1->a, 3->c after projecting them from underlying data,
+     * then create {@link ProjectedRow} with a index mapping and return null for 6->b in table
      * fields.
      *
      * @param tableFields the fields of table
@@ -345,14 +347,11 @@ public class SchemaEvolutionUtil {
                 } else {
                     // TODO support column type evolution in nested type
                     checkState(
-                            tableField.type() instanceof AtomicDataType
-                                    && dataField.type() instanceof AtomicDataType,
+                            !tableField.type().is(DataTypeFamily.CONSTRUCTED),
                             "Only support column type evolution in atomic data type.");
                     converterMapping[i] =
                             checkNotNull(
-                                    CastExecutors.resolve(
-                                            dataField.type().logicalType(),
-                                            tableField.type().logicalType()));
+                                    CastExecutors.resolve(dataField.type(), tableField.type()));
                     castExist = true;
                 }
             }

@@ -20,14 +20,13 @@ package org.apache.flink.table.store.file.format;
 
 import org.apache.flink.api.common.serialization.BulkWriter;
 import org.apache.flink.configuration.Configuration;
-import org.apache.flink.connector.file.src.FileSourceSplit;
-import org.apache.flink.connector.file.src.reader.BulkFormat;
-import org.apache.flink.table.data.RowData;
+import org.apache.flink.table.store.data.InternalRow;
 import org.apache.flink.table.store.file.predicate.Predicate;
 import org.apache.flink.table.store.file.stats.TestFileStatsExtractor;
 import org.apache.flink.table.store.format.FileFormat;
 import org.apache.flink.table.store.format.FileStatsExtractor;
-import org.apache.flink.table.types.logical.RowType;
+import org.apache.flink.table.store.format.FormatReaderFactory;
+import org.apache.flink.table.store.types.RowType;
 
 import javax.annotation.Nullable;
 
@@ -45,13 +44,13 @@ public class FileStatsExtractingAvroFormat extends FileFormat {
     }
 
     @Override
-    public BulkFormat<RowData, FileSourceSplit> createReaderFactory(
+    public FormatReaderFactory createReaderFactory(
             RowType type, int[][] projection, @Nullable List<Predicate> filters) {
         return avro.createReaderFactory(type, projection, filters);
     }
 
     @Override
-    public BulkWriter.Factory<RowData> createWriterFactory(RowType type) {
+    public BulkWriter.Factory<InternalRow> createWriterFactory(RowType type) {
         return avro.createWriterFactory(type);
     }
 

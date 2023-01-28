@@ -20,11 +20,11 @@ package org.apache.flink.table.store.benchmark.file.mergetree;
 
 import org.apache.flink.configuration.Configuration;
 import org.apache.flink.core.fs.Path;
-import org.apache.flink.table.data.GenericRowData;
-import org.apache.flink.table.data.RowData;
 import org.apache.flink.table.store.CoreOptions;
 import org.apache.flink.table.store.benchmark.config.ConfigUtil;
 import org.apache.flink.table.store.benchmark.config.FileBenchmarkOptions;
+import org.apache.flink.table.store.data.GenericRow;
+import org.apache.flink.table.store.data.InternalRow;
 import org.apache.flink.table.store.file.KeyValue;
 import org.apache.flink.table.store.file.compact.CompactResult;
 import org.apache.flink.table.store.file.io.DataFileMeta;
@@ -42,8 +42,6 @@ import org.apache.flink.table.store.file.mergetree.compact.CompactStrategy;
 import org.apache.flink.table.store.file.mergetree.compact.DeduplicateMergeFunction;
 import org.apache.flink.table.store.file.mergetree.compact.MergeTreeCompactManager;
 import org.apache.flink.table.store.file.mergetree.compact.UniversalCompaction;
-import org.apache.flink.table.store.file.schema.AtomicDataType;
-import org.apache.flink.table.store.file.schema.DataField;
 import org.apache.flink.table.store.file.schema.KeyValueFieldsExtractor;
 import org.apache.flink.table.store.file.schema.SchemaManager;
 import org.apache.flink.table.store.file.schema.TableSchema;
@@ -51,10 +49,11 @@ import org.apache.flink.table.store.file.utils.FileStorePathFactory;
 import org.apache.flink.table.store.file.utils.RecordReaderIterator;
 import org.apache.flink.table.store.file.utils.RecordWriter;
 import org.apache.flink.table.store.format.FileFormat;
+import org.apache.flink.table.store.types.DataField;
+import org.apache.flink.table.store.types.IntType;
+import org.apache.flink.table.store.types.RowKind;
+import org.apache.flink.table.store.types.RowType;
 import org.apache.flink.table.store.utils.BinaryRowDataUtil;
-import org.apache.flink.table.types.logical.IntType;
-import org.apache.flink.table.types.logical.RowType;
-import org.apache.flink.types.RowKind;
 
 import org.apache.commons.io.FileUtils;
 import org.openjdk.jmh.annotations.BenchmarkMode;
@@ -102,7 +101,7 @@ public class MergeTreeBenchmark {
 
     protected ExecutorService service;
     protected File file;
-    protected Comparator<RowData> comparator;
+    protected Comparator<InternalRow> comparator;
     protected CoreOptions options;
     protected KeyValueFileReaderFactory readerFactory;
     private KeyValueFileReaderFactory compactReaderFactory;
@@ -135,8 +134,8 @@ public class MergeTreeBenchmark {
     private RecordWriter<KeyValue> recreateMergeTree(
             Configuration configuration, Path path, FileStorePathFactory pathFactory) {
         options = new CoreOptions(configuration);
-        RowType keyType = new RowType(singletonList(new RowType.RowField("k", new IntType())));
-        RowType valueType = new RowType(singletonList(new RowType.RowField("v", new IntType())));
+        RowType keyType = new RowType(singletonList(new DataField(0, "k", new IntType())));
+        RowType valueType = new RowType(singletonList(new DataField(1, "v", new IntType())));
         FileFormat flushingFormat = FileFormat.fromIdentifier(format, new Configuration());
         KeyValueFileReaderFactory.Builder readerBuilder =
                 KeyValueFileReaderFactory.builder(
@@ -150,13 +149,19 @@ public class MergeTreeBenchmark {
                             @Override
                             public List<DataField> keyFields(TableSchema schema) {
                                 return Collections.singletonList(
-                                        new DataField(0, "k", new AtomicDataType(new IntType())));
+                                        new DataField(
+                                                0,
+                                                "k",
+                                                new org.apache.flink.table.store.types.IntType()));
                             }
 
                             @Override
                             public List<DataField> valueFields(TableSchema schema) {
                                 return Collections.singletonList(
-                                        new DataField(0, "v", new AtomicDataType(new IntType())));
+                                        new DataField(
+                                                0,
+                                                "v",
+                                                new org.apache.flink.table.store.types.IntType()));
                             }
                         });
         readerFactory = readerBuilder.build(BinaryRowDataUtil.EMPTY_ROW, 0);
@@ -250,18 +255,18 @@ public class MergeTreeBenchmark {
     /** Key value data to be written in {@link MergeTreeWriterBenchmark}. */
     @State(Scope.Thread)
     public static class KeyValueData {
-        GenericRowData key;
+        GenericRow key;
         RowKind kind;
-        GenericRowData value;
+        GenericRow value;
 
         @Setup(Level.Invocation)
         public void kvSetup() {
-            key = new GenericRowData(1);
+            key = new GenericRow(1);
             key.setField(0, ThreadLocalRandom.current().nextInt());
 
             kind = RowKind.INSERT;
 
-            value = new GenericRowData(1);
+            value = new GenericRow(1);
             value.setField(0, ThreadLocalRandom.current().nextInt());
         }
 

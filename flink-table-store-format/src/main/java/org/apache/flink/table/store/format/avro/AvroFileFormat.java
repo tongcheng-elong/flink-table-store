@@ -19,21 +19,18 @@
 package org.apache.flink.table.store.format.avro;
 
 import org.apache.flink.api.common.serialization.BulkWriter;
-import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.configuration.ConfigOption;
 import org.apache.flink.configuration.ConfigOptions;
 import org.apache.flink.configuration.ReadableConfig;
-import org.apache.flink.connector.file.src.FileSourceSplit;
-import org.apache.flink.connector.file.src.reader.BulkFormat;
 import org.apache.flink.core.fs.FSDataOutputStream;
-import org.apache.flink.table.data.GenericRowData;
-import org.apache.flink.table.data.RowData;
-import org.apache.flink.table.runtime.typeutils.InternalTypeInfo;
+import org.apache.flink.table.store.data.GenericRow;
+import org.apache.flink.table.store.data.InternalRow;
 import org.apache.flink.table.store.file.predicate.Predicate;
 import org.apache.flink.table.store.format.FileFormat;
+import org.apache.flink.table.store.format.FormatReaderFactory;
+import org.apache.flink.table.store.types.DataType;
+import org.apache.flink.table.store.types.RowType;
 import org.apache.flink.table.store.utils.Projection;
-import org.apache.flink.table.types.logical.LogicalType;
-import org.apache.flink.table.types.logical.RowType;
 
 import org.apache.avro.Schema;
 import org.apache.avro.file.CodecFactory;
@@ -71,7 +68,7 @@ public class AvroFileFormat extends FileFormat {
     }
 
     @Override
-    public BulkFormat<RowData, FileSourceSplit> createReaderFactory(
+    public FormatReaderFactory createReaderFactory(
             RowType type, int[][] projection, @Nullable List<Predicate> filters) {
         // avro is a file format that keeps schemas in file headers,
         // if the schema given to the reader is not equal to the schema in header,
@@ -79,29 +76,24 @@ public class AvroFileFormat extends FileFormat {
         // schema
         //
         // for detailed discussion see comments in https://github.com/apache/flink/pull/18657
-        LogicalType producedType = Projection.of(projection).project(type);
-        return new AvroGenericRecordBulkFormat(
-                (RowType) producedType.copy(false), InternalTypeInfo.of(producedType));
+        DataType producedType = Projection.of(projection).project(type);
+        return new AvroGenericRecordBulkFormat((RowType) producedType.copy(false));
     }
 
     @Override
-    public BulkWriter.Factory<RowData> createWriterFactory(RowType type) {
+    public BulkWriter.Factory<InternalRow> createWriterFactory(RowType type) {
         return new RowDataAvroWriterFactory(type, formatOptions.get(AVRO_OUTPUT_CODEC));
     }
 
-    private static class AvroGenericRecordBulkFormat
-            extends AbstractAvroBulkFormat<GenericRecord, RowData, FileSourceSplit> {
+    private static class AvroGenericRecordBulkFormat extends AbstractAvroBulkFormat<GenericRecord> {
 
         private static final long serialVersionUID = 1L;
 
         private final RowType producedRowType;
-        private final TypeInformation<RowData> producedTypeInfo;
 
-        public AvroGenericRecordBulkFormat(
-                RowType producedRowType, TypeInformation<RowData> producedTypeInfo) {
+        public AvroGenericRecordBulkFormat(RowType producedRowType) {
             super(AvroSchemaConverter.convertToSchema(producedRowType));
             this.producedRowType = producedRowType;
-            this.producedTypeInfo = producedTypeInfo;
         }
 
         @Override
@@ -110,23 +102,18 @@ public class AvroFileFormat extends FileFormat {
         }
 
         @Override
-        protected Function<GenericRecord, RowData> createConverter() {
+        protected Function<GenericRecord, InternalRow> createConverter() {
             AvroToRowDataConverters.AvroToRowDataConverter converter =
                     AvroToRowDataConverters.createRowConverter(producedRowType);
-            return record -> record == null ? null : (GenericRowData) converter.convert(record);
-        }
-
-        @Override
-        public TypeInformation<RowData> getProducedType() {
-            return producedTypeInfo;
+            return record -> record == null ? null : (GenericRow) converter.convert(record);
         }
     }
 
     /**
-     * A {@link BulkWriter.Factory} to convert {@link RowData} to {@link GenericRecord} and wrap
+     * A {@link BulkWriter.Factory} to convert {@link InternalRow} to {@link GenericRecord} and wrap
      * {@link AvroWriterFactory}.
      */
-    private static class RowDataAvroWriterFactory implements BulkWriter.Factory<RowData> {
+    private static class RowDataAvroWriterFactory implements BulkWriter.Factory<InternalRow> {
 
         private static final long serialVersionUID = 1L;
 
@@ -157,15 +144,15 @@ public class AvroFileFormat extends FileFormat {
         }
 
         @Override
-        public BulkWriter<RowData> create(FSDataOutputStream out) throws IOException {
+        public BulkWriter<InternalRow> create(FSDataOutputStream out) throws IOException {
             BulkWriter<GenericRecord> writer = factory.create(out);
             RowDataToAvroConverters.RowDataToAvroConverter converter =
                     RowDataToAvroConverters.createConverter(rowType);
             Schema schema = AvroSchemaConverter.convertToSchema(rowType);
-            return new BulkWriter<RowData>() {
+            return new BulkWriter<InternalRow>() {
 
                 @Override
-                public void addElement(RowData element) throws IOException {
+                public void addElement(InternalRow element) throws IOException {
                     GenericRecord record = (GenericRecord) converter.convert(schema, element);
                     writer.addElement(record);
                 }

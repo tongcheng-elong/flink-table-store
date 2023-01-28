@@ -18,8 +18,7 @@
 
 package org.apache.flink.table.store.file.operation;
 
-import org.apache.flink.table.api.TableException;
-import org.apache.flink.table.data.binary.BinaryRowData;
+import org.apache.flink.table.store.data.BinaryRow;
 import org.apache.flink.table.store.file.Snapshot;
 import org.apache.flink.table.store.file.manifest.ManifestEntry;
 import org.apache.flink.table.store.file.manifest.ManifestFile;
@@ -34,8 +33,8 @@ import org.apache.flink.table.store.file.stats.FieldStatsArraySerializer;
 import org.apache.flink.table.store.file.utils.FileStorePathFactory;
 import org.apache.flink.table.store.file.utils.FileUtils;
 import org.apache.flink.table.store.file.utils.SnapshotManager;
+import org.apache.flink.table.store.types.RowType;
 import org.apache.flink.table.store.utils.RowDataToObjectArrayConverter;
-import org.apache.flink.table.types.logical.RowType;
 import org.apache.flink.util.Preconditions;
 
 import javax.annotation.Nullable;
@@ -111,9 +110,9 @@ public abstract class AbstractFileStoreScan implements FileStoreScan {
     }
 
     @Override
-    public FileStoreScan withPartitionFilter(List<BinaryRowData> partitions) {
+    public FileStoreScan withPartitionFilter(List<BinaryRow> partitions) {
         PredicateBuilder builder = new PredicateBuilder(partitionConverter.rowType());
-        Function<BinaryRowData, Predicate> partitionToPredicate =
+        Function<BinaryRow, Predicate> partitionToPredicate =
                 p -> {
                     List<Predicate> fieldPredicates = new ArrayList<>();
                     Object[] partitionObjects = partitionConverter.convert(p);
@@ -125,7 +124,7 @@ public abstract class AbstractFileStoreScan implements FileStoreScan {
                 };
         List<Predicate> predicates =
                 partitions.stream()
-                        .filter(p -> p.getArity() > 0)
+                        .filter(p -> p.getFieldCount() > 0)
                         .map(partitionToPredicate)
                         .collect(Collectors.toList());
         if (predicates.isEmpty()) {
@@ -219,7 +218,7 @@ public abstract class AbstractFileStoreScan implements FileStoreScan {
                                                                 .defaultValue())
                                                 .generatePartValues(file.partition())
                                 : "table";
-                throw new TableException(
+                throw new RuntimeException(
                         String.format(
                                 "Try to write %s with a new bucket num %d, but the previous bucket num is %d. "
                                         + "Please switch to batch mode, and perform INSERT OVERWRITE to rescale current data layout first.",

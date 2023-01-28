@@ -20,22 +20,22 @@ package org.apache.flink.table.store.format;
 
 import org.apache.flink.api.common.serialization.BulkWriter;
 import org.apache.flink.configuration.Configuration;
-import org.apache.flink.connector.file.src.FileSourceSplit;
-import org.apache.flink.connector.file.src.reader.BulkFormat;
-import org.apache.flink.connector.file.src.util.Utils;
 import org.apache.flink.core.fs.FSDataOutputStream;
 import org.apache.flink.core.fs.FileSystem;
 import org.apache.flink.core.fs.Path;
-import org.apache.flink.table.data.GenericRowData;
-import org.apache.flink.table.data.RowData;
-import org.apache.flink.table.types.logical.IntType;
-import org.apache.flink.table.types.logical.RowType;
+import org.apache.flink.table.store.data.GenericRow;
+import org.apache.flink.table.store.data.InternalRow;
+import org.apache.flink.table.store.file.utils.RecordReader;
+import org.apache.flink.table.store.file.utils.RecordReaderUtils;
+import org.apache.flink.table.store.types.IntType;
+import org.apache.flink.table.store.types.RowType;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -62,35 +62,31 @@ public class BulkFileFormatTest {
     public void testFormatWriteRead(
             @TempDir java.nio.file.Path tempDir, String format, String codec) throws IOException {
         FileFormat fileFormat = createFileFormat(format, codec);
-        RowType rowType = RowType.of(new IntType(), new IntType());
+        RowType rowType =
+                RowType.builder().fields(Arrays.asList(new IntType(), new IntType())).build();
 
         Path path = new Path(tempDir.toUri().toString(), "1." + format);
         FileSystem fs = path.getFileSystem();
 
         // write
-        List<RowData> expected = new ArrayList<>();
-        expected.add(GenericRowData.of(1, 1));
-        expected.add(GenericRowData.of(2, 2));
-        expected.add(GenericRowData.of(3, 3));
+        List<InternalRow> expected = new ArrayList<>();
+        expected.add(GenericRow.of(1, 1));
+        expected.add(GenericRow.of(2, 2));
+        expected.add(GenericRow.of(3, 3));
         FSDataOutputStream out = fs.create(path, FileSystem.WriteMode.NO_OVERWRITE);
-        BulkWriter<RowData> writer = fileFormat.createWriterFactory(rowType).create(out);
-        for (RowData row : expected) {
+        BulkWriter<InternalRow> writer = fileFormat.createWriterFactory(rowType).create(out);
+        for (InternalRow row : expected) {
             writer.addElement(row);
         }
         writer.finish();
         out.close();
 
         // read
-        BulkFormat.Reader<RowData> reader =
-                fileFormat
-                        .createReaderFactory(rowType)
-                        .createReader(
-                                new Configuration(),
-                                new FileSourceSplit("", path, 0, fs.getFileStatus(path).getLen()));
-        List<RowData> result = new ArrayList<>();
-        Utils.forEachRemaining(
-                reader,
-                rowData -> result.add(GenericRowData.of(rowData.getInt(0), rowData.getInt(0))));
+        RecordReader<InternalRow> reader =
+                fileFormat.createReaderFactory(rowType).createReader(path);
+        List<InternalRow> result = new ArrayList<>();
+        RecordReaderUtils.forEachRemaining(
+                reader, rowData -> result.add(GenericRow.of(rowData.getInt(0), rowData.getInt(0))));
 
         assertThat(result).isEqualTo(expected);
     }
