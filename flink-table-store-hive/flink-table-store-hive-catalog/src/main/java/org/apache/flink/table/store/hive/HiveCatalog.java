@@ -437,7 +437,7 @@ public class HiveCatalog extends AbstractCatalog {
             throw new RuntimeException(e);
         }
         return StringUtils.isNullOrWhitespaceOnly(
-                hiveConf.get(HiveConf.ConfVars.METASTOREURIS.varname))
+                        hiveConf.get(HiveConf.ConfVars.METASTOREURIS.varname))
                 ? client
                 : HiveMetaStoreClient.newSynchronizedClient(client);
     }
