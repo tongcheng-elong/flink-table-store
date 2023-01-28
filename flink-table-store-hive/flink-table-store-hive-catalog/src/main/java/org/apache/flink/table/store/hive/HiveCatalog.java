@@ -86,9 +86,9 @@ public class HiveCatalog extends AbstractCatalog {
     }
 
     @Override
-    public Path getTableLocation(ObjectPath tablePath) {
+    public Path getTableLocation(Identifier identifier) {
         try {
-            Table table = client.getTable(tablePath.getDatabaseName(), tablePath.getObjectName());
+            Table table = client.getTable(identifier.getDatabaseName(), identifier.getObjectName());
             return new Path(table.getSd().getLocation());
         } catch (TException e) {
             throw new RuntimeException("Failed to get table location", e);
@@ -353,7 +353,7 @@ public class HiveCatalog extends AbstractCatalog {
                 schema.fields().stream()
                         .map(this::convertToFieldSchema)
                         .collect(Collectors.toList()));
-        sd.setLocation(getTableLocation(identifier).toString());
+        sd.setLocation(super.getTableLocation(identifier).toString());
 
         sd.setInputFormat(INPUT_FORMAT_CLASS_NAME);
         sd.setOutputFormat(OUTPUT_FORMAT_CLASS_NAME);
@@ -410,7 +410,7 @@ public class HiveCatalog extends AbstractCatalog {
 
     private SchemaManager schemaManager(Identifier identifier) {
         checkIdentifierUpperCase(identifier);
-        return new SchemaManager(getTableLocation(identifier)).withLock(lock(identifier));
+        return new SchemaManager(super.getTableLocation(identifier)).withLock(lock(identifier));
     }
 
     private Lock lock(Identifier identifier) {
@@ -437,7 +437,7 @@ public class HiveCatalog extends AbstractCatalog {
             throw new RuntimeException(e);
         }
         return StringUtils.isNullOrWhitespaceOnly(
-                        hiveConf.get(HiveConf.ConfVars.METASTOREURIS.varname))
+                hiveConf.get(HiveConf.ConfVars.METASTOREURIS.varname))
                 ? client
                 : HiveMetaStoreClient.newSynchronizedClient(client);
     }

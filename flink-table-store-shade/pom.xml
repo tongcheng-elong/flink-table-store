@@ -253,11 +253,7 @@ under the License.
                                     <include>org.apache.flink:flink-core</include>
                                     <include>org.apache.flink:flink-runtime</include>
                                     <include>org.apache.flink:${flink.streaming.java}</include>
-<<<<<<< HEAD
                                     <include>org.apache.flink:flink-connector-base</include>
-                                    <include>org.apache.flink:flink-connector-files</include>
-=======
->>>>>>> master
                                     <include>org.apache.flink:flink-hadoop-fs</include>
                                     <include>org.apache.flink:flink-shaded-jackson</include>
                                     <include>org.apache.flink:flink-shaded-guava</include>
