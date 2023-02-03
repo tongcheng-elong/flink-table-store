@@ -18,7 +18,6 @@
 
 package org.apache.flink.table.store.hive;
 
-import org.apache.flink.core.fs.Path;
 import org.apache.flink.table.store.file.catalog.AbstractCatalog;
 import org.apache.flink.table.store.file.catalog.CatalogLock;
 import org.apache.flink.table.store.file.catalog.Identifier;
@@ -27,6 +26,8 @@ import org.apache.flink.table.store.file.schema.SchemaChange;
 import org.apache.flink.table.store.file.schema.SchemaManager;
 import org.apache.flink.table.store.file.schema.TableSchema;
 import org.apache.flink.table.store.file.schema.UpdateSchema;
+import org.apache.flink.table.store.fs.FileIO;
+import org.apache.flink.table.store.fs.Path;
 import org.apache.flink.table.store.table.TableType;
 import org.apache.flink.table.store.types.DataField;
 import org.apache.flink.util.StringUtils;
@@ -55,11 +56,11 @@ import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
-import static org.apache.flink.table.store.CatalogOptions.LOCK_ENABLED;
-import static org.apache.flink.table.store.CatalogOptions.TABLE_TYPE;
 import static org.apache.flink.table.store.hive.HiveCatalogLock.acquireTimeout;
 import static org.apache.flink.table.store.hive.HiveCatalogLock.checkMaxSleep;
-import static org.apache.flink.util.Preconditions.checkState;
+import static org.apache.flink.table.store.options.CatalogOptions.LOCK_ENABLED;
+import static org.apache.flink.table.store.options.CatalogOptions.TABLE_TYPE;
+import static org.apache.flink.table.store.utils.Preconditions.checkState;
 
 /** A catalog implementation for Hive. */
 public class HiveCatalog extends AbstractCatalog {
@@ -79,7 +80,8 @@ public class HiveCatalog extends AbstractCatalog {
     private final String clientClassName;
     private final IMetaStoreClient client;
 
-    public HiveCatalog(Configuration hadoopConfig, String clientClassName) {
+    public HiveCatalog(FileIO fileIO, Configuration hadoopConfig, String clientClassName) {
+        super(fileIO);
         this.hiveConf = new HiveConf(hadoopConfig, HiveConf.class);
         this.clientClassName = clientClassName;
         this.client = createClient(hiveConf, clientClassName);
@@ -182,7 +184,7 @@ public class HiveCatalog extends AbstractCatalog {
             throw new TableNotExistException(identifier);
         }
         Path tableLocation = getTableLocation(identifier);
-        return new SchemaManager(tableLocation)
+        return new SchemaManager(fileIO, tableLocation)
                 .latest()
                 .orElseThrow(
                         () -> new RuntimeException("There is no table stored in " + tableLocation));
@@ -276,7 +278,7 @@ public class HiveCatalog extends AbstractCatalog {
     }
 
     @Override
-    public void close() {
+    public void close() throws Exception {
         client.close();
     }
 
@@ -410,7 +412,7 @@ public class HiveCatalog extends AbstractCatalog {
 
     private SchemaManager schemaManager(Identifier identifier) {
         checkIdentifierUpperCase(identifier);
-        return new SchemaManager(super.getTableLocation(identifier)).withLock(lock(identifier));
+        return new SchemaManager(fileIO, super.getTableLocation(identifier)).withLock(lock(identifier));
     }
 
     private Lock lock(Identifier identifier) {

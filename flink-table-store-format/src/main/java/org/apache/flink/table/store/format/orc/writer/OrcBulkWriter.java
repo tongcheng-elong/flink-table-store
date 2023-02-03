@@ -20,27 +20,25 @@ package org.apache.flink.table.store.format.orc.writer;
 
 import org.apache.flink.annotation.Internal;
 import org.apache.flink.api.common.serialization.BulkWriter;
+import org.apache.flink.table.store.data.InternalRow;
+import org.apache.flink.table.store.format.FormatWriter;
 
 import org.apache.hadoop.hive.ql.exec.vector.VectorizedRowBatch;
 import org.apache.orc.Writer;
 
 import java.io.IOException;
 
-import static org.apache.flink.util.Preconditions.checkNotNull;
+import static org.apache.flink.table.store.utils.Preconditions.checkNotNull;
 
-/**
- * A {@link BulkWriter} implementation that writes data in ORC format.
- *
- * @param <T> The type of element written.
- */
+/** A {@link BulkWriter} implementation that writes data in ORC format. */
 @Internal
-public class OrcBulkWriter<T> implements BulkWriter<T> {
+public class OrcBulkWriter implements FormatWriter {
 
     private final Writer writer;
-    private final Vectorizer<T> vectorizer;
+    private final Vectorizer<InternalRow> vectorizer;
     private final VectorizedRowBatch rowBatch;
 
-    public OrcBulkWriter(Vectorizer<T> vectorizer, Writer writer) {
+    public OrcBulkWriter(Vectorizer<InternalRow> vectorizer, Writer writer) {
         this.vectorizer = checkNotNull(vectorizer);
         this.writer = checkNotNull(writer);
         this.rowBatch = vectorizer.getSchema().createRowBatch();
@@ -51,7 +49,7 @@ public class OrcBulkWriter<T> implements BulkWriter<T> {
     }
 
     @Override
-    public void addElement(T element) throws IOException {
+    public void addElement(InternalRow element) throws IOException {
         vectorizer.vectorize(element, rowBatch);
         if (rowBatch.size == rowBatch.getMaxSize()) {
             writer.addRowBatch(rowBatch);
