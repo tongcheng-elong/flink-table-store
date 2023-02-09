@@ -19,13 +19,10 @@
 package org.apache.flink.table.store.connector;
 
 import org.apache.flink.table.store.CoreOptions;
-import org.apache.flink.table.store.connector.util.ReadWriteTableTestUtil;
 import org.apache.flink.table.store.file.utils.BlockingIterator;
 import org.apache.flink.table.store.kafka.KafkaTableTestBase;
 import org.apache.flink.types.Row;
 
-import org.apache.kafka.clients.admin.AdminClient;
-import org.apache.kafka.clients.admin.NewTopic;
 import org.junit.Before;
 import org.junit.Ignore;
 import org.junit.Test;
@@ -35,19 +32,17 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
-import java.util.Properties;
-import java.util.UUID;
 
 import static org.apache.flink.table.planner.factories.TestValuesTableFactory.changelogRow;
 import static org.apache.flink.table.store.CoreOptions.SCAN_MODE;
 import static org.apache.flink.table.store.CoreOptions.SCAN_TIMESTAMP_MILLIS;
-import static org.apache.flink.table.store.connector.FlinkConnectorOptions.LOG_SYSTEM;
+import static org.apache.flink.table.store.connector.util.ReadWriteTableTestUtil.SCAN_LATEST;
 import static org.apache.flink.table.store.connector.util.ReadWriteTableTestUtil.assertNoMoreRecords;
 import static org.apache.flink.table.store.connector.util.ReadWriteTableTestUtil.buildQuery;
 import static org.apache.flink.table.store.connector.util.ReadWriteTableTestUtil.buildQueryWithTableOptions;
 import static org.apache.flink.table.store.connector.util.ReadWriteTableTestUtil.buildSimpleQuery;
 import static org.apache.flink.table.store.connector.util.ReadWriteTableTestUtil.checkFileStorePath;
+import static org.apache.flink.table.store.connector.util.ReadWriteTableTestUtil.createTableWithKafkaLog;
 import static org.apache.flink.table.store.connector.util.ReadWriteTableTestUtil.createTemporaryTable;
 import static org.apache.flink.table.store.connector.util.ReadWriteTableTestUtil.init;
 import static org.apache.flink.table.store.connector.util.ReadWriteTableTestUtil.insertInto;
@@ -57,19 +52,10 @@ import static org.apache.flink.table.store.connector.util.ReadWriteTableTestUtil
 import static org.apache.flink.table.store.connector.util.ReadWriteTableTestUtil.testBatchRead;
 import static org.apache.flink.table.store.connector.util.ReadWriteTableTestUtil.testStreamingRead;
 import static org.apache.flink.table.store.connector.util.ReadWriteTableTestUtil.testStreamingReadWithReadFirst;
-import static org.apache.flink.table.store.kafka.KafkaLogOptions.BOOTSTRAP_SERVERS;
-import static org.apache.flink.table.store.kafka.KafkaLogOptions.TOPIC;
-import static org.assertj.core.api.Assertions.assertThat;
+import static org.apache.flink.table.store.connector.util.ReadWriteTableTestUtil.validateStreamingReadResult;
 
 /** Streaming reading and writing with Kafka log IT cases. */
 public class StreamingReadWriteTableWithKafkaLogITCase extends KafkaTableTestBase {
-
-    private final Map<String, String> scanLatest =
-            new HashMap<String, String>() {
-                {
-                    put(SCAN_MODE.key(), CoreOptions.StartupMode.LATEST.toString());
-                }
-            };
 
     @Before
     public void setUp() throws Exception {
@@ -107,10 +93,11 @@ public class StreamingReadWriteTableWithKafkaLogITCase extends KafkaTableTestBas
                         "I,UA,D");
 
         String table =
-                createTable(
+                createTableWithKafkaLog(
                         Arrays.asList("currency STRING", "rate BIGINT", "dt STRING"),
                         Arrays.asList("currency", "dt"),
-                        Collections.singletonList("dt"));
+                        Collections.singletonList("dt"),
+                        false);
 
         insertIntoFromTable(temporaryTable, table);
 
@@ -132,11 +119,11 @@ public class StreamingReadWriteTableWithKafkaLogITCase extends KafkaTableTestBas
 
         insertIntoPartition(table, "PARTITION (dt = '2022-01-04')", "('Yen', 20)");
 
-        assertThat(streamItr.collect(2))
-                .containsExactlyInAnyOrderElementsOf(
-                        Arrays.asList(
-                                changelogRow("+I", "HK Dollar", 100L, "2022-01-03"),
-                                changelogRow("+I", "Yen", 20L, "2022-01-03")));
+        validateStreamingReadResult(
+                streamItr,
+                Arrays.asList(
+                        changelogRow("+I", "HK Dollar", 100L, "2022-01-03"),
+                        changelogRow("+I", "Yen", 20L, "2022-01-03")));
 
         // overwrite partition 2022-01-02
         insertOverwritePartition(
@@ -144,6 +131,7 @@ public class StreamingReadWriteTableWithKafkaLogITCase extends KafkaTableTestBas
 
         // check no changelog generated for streaming read
         assertNoMoreRecords(streamItr);
+        streamItr.close();
 
         // batch read to check data refresh
         testBatchRead(
@@ -155,8 +143,6 @@ public class StreamingReadWriteTableWithKafkaLogITCase extends KafkaTableTestBas
                         changelogRow("+I", "HK Dollar", 100L, "2022-01-03"),
                         changelogRow("+I", "Yen", 20L, "2022-01-03"),
                         changelogRow("+I", "Yen", 20L, "2022-01-04")));
-
-        streamItr.close();
 
         // filter on partition
         testStreamingRead(
@@ -217,10 +203,11 @@ public class StreamingReadWriteTableWithKafkaLogITCase extends KafkaTableTestBas
                         "I,UA,UB,D");
 
         String table =
-                createTable(
+                createTableWithKafkaLog(
                         Arrays.asList("currency STRING", "rate BIGINT", "dt STRING"),
                         Collections.emptyList(),
-                        Collections.singletonList("dt"));
+                        Collections.singletonList("dt"),
+                        false);
 
         insertIntoFromTable(temporaryTable, table);
 
@@ -299,10 +286,11 @@ public class StreamingReadWriteTableWithKafkaLogITCase extends KafkaTableTestBas
                         "I, UA, D");
 
         String table =
-                createTable(
+                createTableWithKafkaLog(
                         Arrays.asList("currency STRING", "rate BIGINT"),
                         Collections.singletonList("currency"),
-                        Collections.emptyList());
+                        Collections.emptyList(),
+                        false);
 
         insertIntoFromTable(temporaryTable, table);
 
@@ -361,10 +349,11 @@ public class StreamingReadWriteTableWithKafkaLogITCase extends KafkaTableTestBas
                         "I,UA,UB,D");
 
         String table =
-                createTable(
+                createTableWithKafkaLog(
                         Arrays.asList("currency STRING", "rate BIGINT"),
                         Collections.emptyList(),
-                        Collections.emptyList());
+                        Collections.emptyList(),
+                        false);
 
         insertIntoFromTable(temporaryTable, table);
 
@@ -434,7 +423,7 @@ public class StreamingReadWriteTableWithKafkaLogITCase extends KafkaTableTestBas
                         "I,UA,D");
 
         String table =
-                createTable(
+                createTableWithKafkaLog(
                         Arrays.asList("currency STRING", "rate BIGINT", "dt STRING"),
                         Arrays.asList("currency", "dt"),
                         Collections.singletonList("dt"),
@@ -444,7 +433,7 @@ public class StreamingReadWriteTableWithKafkaLogITCase extends KafkaTableTestBas
                 testStreamingReadWithReadFirst(
                         temporaryTable,
                         table,
-                        buildQueryWithTableOptions(table, "*", "", scanLatest),
+                        buildQueryWithTableOptions(table, "*", "", SCAN_LATEST),
                         Arrays.asList(
                                 changelogRow("+I", "US Dollar", 102L, "2022-01-01"),
                                 changelogRow("+I", "Euro", 114L, "2022-01-01"),
@@ -457,20 +446,20 @@ public class StreamingReadWriteTableWithKafkaLogITCase extends KafkaTableTestBas
 
         // test only read the latest log
         insertInto(table, "('US Dollar', 104, '2022-01-01')", "('Euro', 100, '2022-01-02')");
-        assertThat(streamItr.collect(4))
-                .containsExactlyInAnyOrderElementsOf(
-                        Arrays.asList(
-                                changelogRow("-U", "US Dollar", 102L, "2022-01-01"),
-                                changelogRow("+U", "US Dollar", 104L, "2022-01-01"),
-                                changelogRow("-U", "Euro", 119L, "2022-01-02"),
-                                changelogRow("+U", "Euro", 100L, "2022-01-02")));
+        validateStreamingReadResult(
+                streamItr,
+                Arrays.asList(
+                        changelogRow("-U", "US Dollar", 102L, "2022-01-01"),
+                        changelogRow("+U", "US Dollar", 104L, "2022-01-01"),
+                        changelogRow("-U", "Euro", 119L, "2022-01-02"),
+                        changelogRow("+U", "Euro", 100L, "2022-01-02")));
 
         assertNoMoreRecords(streamItr);
         streamItr.close();
 
         // test partition filter
         table =
-                createTable(
+                createTableWithKafkaLog(
                         Arrays.asList("currency STRING", "rate BIGINT", "dt STRING"),
                         Arrays.asList("currency", "dt"),
                         Collections.singletonList("dt"),
@@ -480,7 +469,7 @@ public class StreamingReadWriteTableWithKafkaLogITCase extends KafkaTableTestBas
                         temporaryTable,
                         table,
                         buildQueryWithTableOptions(
-                                table, "*", "WHERE dt = '2022-01-01'", scanLatest),
+                                table, "*", "WHERE dt = '2022-01-01'", SCAN_LATEST),
                         Arrays.asList(
                                 changelogRow("+I", "US Dollar", 102L, "2022-01-01"),
                                 changelogRow("+I", "Euro", 114L, "2022-01-01"),
@@ -493,7 +482,7 @@ public class StreamingReadWriteTableWithKafkaLogITCase extends KafkaTableTestBas
 
         // test field filter
         table =
-                createTable(
+                createTableWithKafkaLog(
                         Arrays.asList("currency STRING", "rate BIGINT", "dt STRING"),
                         Arrays.asList("currency", "dt"),
                         Collections.singletonList("dt"),
@@ -503,14 +492,14 @@ public class StreamingReadWriteTableWithKafkaLogITCase extends KafkaTableTestBas
                         temporaryTable,
                         table,
                         buildQueryWithTableOptions(
-                                table, "*", "WHERE currency = 'Yen'", scanLatest),
+                                table, "*", "WHERE currency = 'Yen'", SCAN_LATEST),
                         Arrays.asList(
                                 changelogRow("+I", "Yen", 1L, "2022-01-01"),
                                 changelogRow("-D", "Yen", 1L, "2022-01-01")))
                 .close();
 
         table =
-                createTable(
+                createTableWithKafkaLog(
                         Arrays.asList("currency STRING", "rate BIGINT", "dt STRING"),
                         Arrays.asList("currency", "dt"),
                         Collections.singletonList("dt"),
@@ -519,7 +508,7 @@ public class StreamingReadWriteTableWithKafkaLogITCase extends KafkaTableTestBas
         testStreamingReadWithReadFirst(
                         temporaryTable,
                         table,
-                        buildQueryWithTableOptions(table, "*", "WHERE rate = 114", scanLatest),
+                        buildQueryWithTableOptions(table, "*", "WHERE rate = 114", SCAN_LATEST),
                         Arrays.asList(
                                 // part = 2022-01-01
                                 changelogRow("+I", "Euro", 114L, "2022-01-01"),
@@ -528,7 +517,7 @@ public class StreamingReadWriteTableWithKafkaLogITCase extends KafkaTableTestBas
 
         // test partition and field filter
         table =
-                createTable(
+                createTableWithKafkaLog(
                         Arrays.asList("currency STRING", "rate BIGINT", "dt STRING"),
                         Arrays.asList("currency", "dt"),
                         Collections.singletonList("dt"),
@@ -538,13 +527,13 @@ public class StreamingReadWriteTableWithKafkaLogITCase extends KafkaTableTestBas
                         temporaryTable,
                         table,
                         buildQueryWithTableOptions(
-                                table, "*", "WHERE rate = 114 AND dt = '2022-01-02'", scanLatest),
+                                table, "*", "WHERE rate = 114 AND dt = '2022-01-02'", SCAN_LATEST),
                         Collections.emptyList())
                 .close();
 
         // test projection
         table =
-                createTable(
+                createTableWithKafkaLog(
                         Arrays.asList("currency STRING", "rate BIGINT", "dt STRING"),
                         Arrays.asList("currency", "dt"),
                         Collections.singletonList("dt"),
@@ -553,7 +542,7 @@ public class StreamingReadWriteTableWithKafkaLogITCase extends KafkaTableTestBas
         testStreamingReadWithReadFirst(
                         temporaryTable,
                         table,
-                        buildQueryWithTableOptions(table, "rate", "", scanLatest),
+                        buildQueryWithTableOptions(table, "rate", "", SCAN_LATEST),
                         Arrays.asList(
                                 // part = 2022-01-01
                                 changelogRow("+I", 102L), // US Dollar
@@ -570,7 +559,7 @@ public class StreamingReadWriteTableWithKafkaLogITCase extends KafkaTableTestBas
 
         // test projection and filter
         table =
-                createTable(
+                createTableWithKafkaLog(
                         Arrays.asList("currency STRING", "rate BIGINT", "dt STRING"),
                         Arrays.asList("currency", "dt"),
                         Collections.singletonList("dt"),
@@ -580,7 +569,7 @@ public class StreamingReadWriteTableWithKafkaLogITCase extends KafkaTableTestBas
                         temporaryTable,
                         table,
                         buildQueryWithTableOptions(
-                                table, "rate", "WHERE dt = '2022-01-02'", scanLatest),
+                                table, "rate", "WHERE dt = '2022-01-02'", SCAN_LATEST),
                         Collections.singletonList(changelogRow("+I", 119L)) // Euro
                         )
                 .close();
@@ -614,7 +603,7 @@ public class StreamingReadWriteTableWithKafkaLogITCase extends KafkaTableTestBas
                         "I,UA,UB,D");
 
         String table =
-                createTable(
+                createTableWithKafkaLog(
                         Arrays.asList("currency STRING", "rate BIGINT", "dt STRING"),
                         Collections.emptyList(),
                         Collections.singletonList("dt"),
@@ -623,7 +612,7 @@ public class StreamingReadWriteTableWithKafkaLogITCase extends KafkaTableTestBas
         testStreamingReadWithReadFirst(
                         temporaryTable,
                         table,
-                        buildQueryWithTableOptions(table, "*", "", scanLatest),
+                        buildQueryWithTableOptions(table, "*", "", SCAN_LATEST),
                         Arrays.asList(
                                 // part = 2022-01-01
                                 changelogRow("+I", "US Dollar", 102L, "2022-01-01"),
@@ -641,7 +630,7 @@ public class StreamingReadWriteTableWithKafkaLogITCase extends KafkaTableTestBas
 
         // test partition filter
         table =
-                createTable(
+                createTableWithKafkaLog(
                         Arrays.asList("currency STRING", "rate BIGINT", "dt STRING"),
                         Collections.emptyList(),
                         Collections.singletonList("dt"),
@@ -651,7 +640,7 @@ public class StreamingReadWriteTableWithKafkaLogITCase extends KafkaTableTestBas
                         temporaryTable,
                         table,
                         buildQueryWithTableOptions(
-                                table, "*", "WHERE dt = '2022-01-01'", scanLatest),
+                                table, "*", "WHERE dt = '2022-01-01'", SCAN_LATEST),
                         Arrays.asList(
                                 changelogRow("+I", "US Dollar", 102L, "2022-01-01"),
                                 changelogRow("+I", "Euro", 116L, "2022-01-01"),
@@ -665,7 +654,10 @@ public class StreamingReadWriteTableWithKafkaLogITCase extends KafkaTableTestBas
                         temporaryTable,
                         table,
                         buildQueryWithTableOptions(
-                                table, "*", "WHERE currency = 'US Dollar' OR rate = 1", scanLatest),
+                                table,
+                                "*",
+                                "WHERE currency = 'US Dollar' OR rate = 1",
+                                SCAN_LATEST),
                         Arrays.asList(
                                 changelogRow("+I", "US Dollar", 102L, "2022-01-01"),
                                 changelogRow("+I", "Yen", 1L, "2022-01-01"),
@@ -674,7 +666,7 @@ public class StreamingReadWriteTableWithKafkaLogITCase extends KafkaTableTestBas
 
         // test partition and field filter
         table =
-                createTable(
+                createTableWithKafkaLog(
                         Arrays.asList("currency STRING", "rate BIGINT", "dt STRING"),
                         Collections.emptyList(),
                         Collections.singletonList("dt"),
@@ -684,7 +676,7 @@ public class StreamingReadWriteTableWithKafkaLogITCase extends KafkaTableTestBas
                         temporaryTable,
                         table,
                         buildQueryWithTableOptions(
-                                table, "*", "WHERE dt = '2022-01-02' AND rate = 114", scanLatest),
+                                table, "*", "WHERE dt = '2022-01-02' AND rate = 114", SCAN_LATEST),
                         Arrays.asList(
                                 changelogRow("+I", "Euro", 114L, "2022-01-02"),
                                 changelogRow("-D", "Euro", 114L, "2022-01-02")))
@@ -692,7 +684,7 @@ public class StreamingReadWriteTableWithKafkaLogITCase extends KafkaTableTestBas
 
         // test projection
         table =
-                createTable(
+                createTableWithKafkaLog(
                         Arrays.asList("currency STRING", "rate BIGINT", "dt STRING"),
                         Collections.emptyList(),
                         Collections.singletonList("dt"),
@@ -701,7 +693,7 @@ public class StreamingReadWriteTableWithKafkaLogITCase extends KafkaTableTestBas
         testStreamingReadWithReadFirst(
                         temporaryTable,
                         table,
-                        buildQueryWithTableOptions(table, "rate", "", scanLatest),
+                        buildQueryWithTableOptions(table, "rate", "", SCAN_LATEST),
                         Arrays.asList(
                                 changelogRow("+I", 102L),
                                 changelogRow("+I", 116L),
@@ -717,7 +709,7 @@ public class StreamingReadWriteTableWithKafkaLogITCase extends KafkaTableTestBas
 
         // test projection and filter
         table =
-                createTable(
+                createTableWithKafkaLog(
                         Arrays.asList("currency STRING", "rate BIGINT", "dt STRING"),
                         Collections.emptyList(),
                         Collections.singletonList("dt"),
@@ -727,7 +719,7 @@ public class StreamingReadWriteTableWithKafkaLogITCase extends KafkaTableTestBas
                         temporaryTable,
                         table,
                         buildQueryWithTableOptions(
-                                table, "rate", "WHERE dt <> '2022-01-01'", scanLatest),
+                                table, "rate", "WHERE dt <> '2022-01-01'", SCAN_LATEST),
                         Arrays.asList(
                                 changelogRow("+I", 114L),
                                 changelogRow("-D", 114L),
@@ -761,7 +753,7 @@ public class StreamingReadWriteTableWithKafkaLogITCase extends KafkaTableTestBas
                         "I,UA,D");
 
         String table =
-                createTable(
+                createTableWithKafkaLog(
                         Arrays.asList("currency STRING", "rate BIGINT"),
                         Collections.singletonList("currency"),
                         Collections.emptyList(),
@@ -770,7 +762,7 @@ public class StreamingReadWriteTableWithKafkaLogITCase extends KafkaTableTestBas
         testStreamingReadWithReadFirst(
                         temporaryTable,
                         table,
-                        buildQueryWithTableOptions(table, "*", "", scanLatest),
+                        buildQueryWithTableOptions(table, "*", "", SCAN_LATEST),
                         Arrays.asList(
                                 changelogRow("+I", "US Dollar", 102L),
                                 changelogRow("+I", "Euro", 114L),
@@ -784,7 +776,7 @@ public class StreamingReadWriteTableWithKafkaLogITCase extends KafkaTableTestBas
 
         // test field filter
         table =
-                createTable(
+                createTableWithKafkaLog(
                         Arrays.asList("currency STRING", "rate BIGINT"),
                         Collections.singletonList("currency"),
                         Collections.emptyList(),
@@ -794,7 +786,7 @@ public class StreamingReadWriteTableWithKafkaLogITCase extends KafkaTableTestBas
                         temporaryTable,
                         table,
                         buildQueryWithTableOptions(
-                                table, "*", "WHERE currency = 'Euro'", scanLatest),
+                                table, "*", "WHERE currency = 'Euro'", SCAN_LATEST),
                         Arrays.asList(
                                 changelogRow("+I", "Euro", 114L),
                                 changelogRow("-U", "Euro", 114L),
@@ -805,7 +797,7 @@ public class StreamingReadWriteTableWithKafkaLogITCase extends KafkaTableTestBas
 
         // test projection
         table =
-                createTable(
+                createTableWithKafkaLog(
                         Arrays.asList("currency STRING", "rate BIGINT"),
                         Collections.singletonList("currency"),
                         Collections.emptyList(),
@@ -814,7 +806,7 @@ public class StreamingReadWriteTableWithKafkaLogITCase extends KafkaTableTestBas
         testStreamingReadWithReadFirst(
                         temporaryTable,
                         table,
-                        buildQueryWithTableOptions(table, "currency", "", scanLatest),
+                        buildQueryWithTableOptions(table, "currency", "", SCAN_LATEST),
                         Arrays.asList(
                                 changelogRow("+I", "US Dollar"),
                                 changelogRow("+I", "Euro"),
@@ -826,7 +818,7 @@ public class StreamingReadWriteTableWithKafkaLogITCase extends KafkaTableTestBas
 
         // test projection and filter
         table =
-                createTable(
+                createTableWithKafkaLog(
                         Arrays.asList("currency STRING", "rate BIGINT"),
                         Collections.singletonList("currency"),
                         Collections.emptyList(),
@@ -836,7 +828,7 @@ public class StreamingReadWriteTableWithKafkaLogITCase extends KafkaTableTestBas
                         temporaryTable,
                         table,
                         buildQueryWithTableOptions(
-                                table, "rate", "WHERE currency = 'Euro'", scanLatest),
+                                table, "rate", "WHERE currency = 'Euro'", SCAN_LATEST),
                         Arrays.asList(
                                 changelogRow("+I", 114L),
                                 changelogRow("-U", 114L),
@@ -874,7 +866,7 @@ public class StreamingReadWriteTableWithKafkaLogITCase extends KafkaTableTestBas
                         "I,UA,UB,D");
 
         String table =
-                createTable(
+                createTableWithKafkaLog(
                         Arrays.asList("currency STRING", "rate BIGINT"),
                         Collections.emptyList(),
                         Collections.emptyList(),
@@ -883,7 +875,7 @@ public class StreamingReadWriteTableWithKafkaLogITCase extends KafkaTableTestBas
         testStreamingReadWithReadFirst(
                         temporaryTable,
                         table,
-                        buildQueryWithTableOptions(table, "*", "", scanLatest),
+                        buildQueryWithTableOptions(table, "*", "", SCAN_LATEST),
                         Arrays.asList(
                                 changelogRow("+I", "US Dollar", 102L),
                                 changelogRow("+I", "Euro", 114L),
@@ -901,7 +893,7 @@ public class StreamingReadWriteTableWithKafkaLogITCase extends KafkaTableTestBas
 
         // test field filter
         table =
-                createTable(
+                createTableWithKafkaLog(
                         Arrays.asList("currency STRING", "rate BIGINT"),
                         Collections.emptyList(),
                         Collections.emptyList(),
@@ -911,7 +903,7 @@ public class StreamingReadWriteTableWithKafkaLogITCase extends KafkaTableTestBas
                         temporaryTable,
                         table,
                         buildQueryWithTableOptions(
-                                table, "*", "WHERE currency = 'Euro'", scanLatest),
+                                table, "*", "WHERE currency = 'Euro'", SCAN_LATEST),
                         Arrays.asList(
                                 changelogRow("+I", "Euro", 114L),
                                 changelogRow("-D", "Euro", 114L),
@@ -924,7 +916,7 @@ public class StreamingReadWriteTableWithKafkaLogITCase extends KafkaTableTestBas
 
         // test projection
         table =
-                createTable(
+                createTableWithKafkaLog(
                         Arrays.asList("currency STRING", "rate BIGINT"),
                         Collections.emptyList(),
                         Collections.emptyList(),
@@ -933,7 +925,7 @@ public class StreamingReadWriteTableWithKafkaLogITCase extends KafkaTableTestBas
         testStreamingReadWithReadFirst(
                         temporaryTable,
                         table,
-                        buildQueryWithTableOptions(table, "currency, rate", "", scanLatest),
+                        buildQueryWithTableOptions(table, "currency, rate", "", SCAN_LATEST),
                         Arrays.asList(
                                 changelogRow("+I", "US Dollar", 102L),
                                 changelogRow("+I", "Euro", 114L),
@@ -951,7 +943,7 @@ public class StreamingReadWriteTableWithKafkaLogITCase extends KafkaTableTestBas
 
         // test projection and filter
         table =
-                createTable(
+                createTableWithKafkaLog(
                         Arrays.asList("currency STRING", "rate BIGINT"),
                         Collections.emptyList(),
                         Collections.emptyList(),
@@ -961,7 +953,7 @@ public class StreamingReadWriteTableWithKafkaLogITCase extends KafkaTableTestBas
                         temporaryTable,
                         table,
                         buildQueryWithTableOptions(
-                                table, "currency", "WHERE currency IS NOT NULL", scanLatest),
+                                table, "currency", "WHERE currency IS NOT NULL", SCAN_LATEST),
                         Arrays.asList(
                                 changelogRow("+I", "US Dollar"),
                                 changelogRow("+I", "Euro"),
@@ -977,7 +969,7 @@ public class StreamingReadWriteTableWithKafkaLogITCase extends KafkaTableTestBas
                 .close();
 
         table =
-                createTable(
+                createTableWithKafkaLog(
                         Arrays.asList("currency STRING", "rate BIGINT"),
                         Collections.emptyList(),
                         Collections.emptyList(),
@@ -987,7 +979,7 @@ public class StreamingReadWriteTableWithKafkaLogITCase extends KafkaTableTestBas
                         temporaryTable,
                         table,
                         buildQueryWithTableOptions(
-                                table, "currency", "WHERE rate = 119", scanLatest),
+                                table, "currency", "WHERE rate = 119", SCAN_LATEST),
                         Arrays.asList(
                                 changelogRow("+I", "Euro"),
                                 changelogRow("-D", "Euro"),
@@ -1017,7 +1009,7 @@ public class StreamingReadWriteTableWithKafkaLogITCase extends KafkaTableTestBas
                         "I");
 
         String table =
-                createTable(
+                createTableWithKafkaLog(
                         Arrays.asList("currency STRING", "rate BIGINT"),
                         Collections.emptyList(),
                         Collections.emptyList(),
@@ -1026,7 +1018,7 @@ public class StreamingReadWriteTableWithKafkaLogITCase extends KafkaTableTestBas
         testStreamingReadWithReadFirst(
                         temporaryTable,
                         table,
-                        buildQueryWithTableOptions(table, "*", "", scanLatest),
+                        buildQueryWithTableOptions(table, "*", "", SCAN_LATEST),
                         initialRecords)
                 .close();
 
@@ -1042,7 +1034,7 @@ public class StreamingReadWriteTableWithKafkaLogITCase extends KafkaTableTestBas
                         "I");
 
         table =
-                createTable(
+                createTableWithKafkaLog(
                         Arrays.asList("currency STRING", "rate BIGINT"),
                         Collections.singletonList("currency"),
                         Collections.emptyList(),
@@ -1051,7 +1043,7 @@ public class StreamingReadWriteTableWithKafkaLogITCase extends KafkaTableTestBas
         testStreamingReadWithReadFirst(
                         temporaryTable,
                         table,
-                        buildQueryWithTableOptions(table, "*", "", scanLatest),
+                        buildQueryWithTableOptions(table, "*", "", SCAN_LATEST),
                         Arrays.asList(
                                 changelogRow("+I", "US Dollar", 102L),
                                 changelogRow("+I", "Euro", 114L),
@@ -1062,7 +1054,7 @@ public class StreamingReadWriteTableWithKafkaLogITCase extends KafkaTableTestBas
 
         // test field filter
         table =
-                createTable(
+                createTableWithKafkaLog(
                         Arrays.asList("currency STRING", "rate BIGINT"),
                         Collections.singletonList("currency"),
                         Collections.emptyList(),
@@ -1071,14 +1063,14 @@ public class StreamingReadWriteTableWithKafkaLogITCase extends KafkaTableTestBas
         testStreamingReadWithReadFirst(
                         temporaryTable,
                         table,
-                        buildQueryWithTableOptions(table, "*", "WHERE rate = 114", scanLatest),
+                        buildQueryWithTableOptions(table, "*", "WHERE rate = 114", SCAN_LATEST),
                         Arrays.asList(
                                 changelogRow("+I", "Euro", 114L), changelogRow("-U", "Euro", 114L)))
                 .close();
 
         // test projection
         table =
-                createTable(
+                createTableWithKafkaLog(
                         Arrays.asList("currency STRING", "rate BIGINT"),
                         Collections.singletonList("currency"),
                         Collections.emptyList(),
@@ -1087,7 +1079,7 @@ public class StreamingReadWriteTableWithKafkaLogITCase extends KafkaTableTestBas
         testStreamingReadWithReadFirst(
                         temporaryTable,
                         table,
-                        buildQueryWithTableOptions(table, "rate", "", scanLatest),
+                        buildQueryWithTableOptions(table, "rate", "", SCAN_LATEST),
                         Arrays.asList(
                                 changelogRow("+I", 102L),
                                 changelogRow("+I", 114L),
@@ -1098,7 +1090,7 @@ public class StreamingReadWriteTableWithKafkaLogITCase extends KafkaTableTestBas
 
         // test projection and filter
         table =
-                createTable(
+                createTableWithKafkaLog(
                         Arrays.asList("currency STRING", "rate BIGINT"),
                         Collections.singletonList("currency"),
                         Collections.emptyList(),
@@ -1108,7 +1100,7 @@ public class StreamingReadWriteTableWithKafkaLogITCase extends KafkaTableTestBas
                         temporaryTable,
                         table,
                         buildQueryWithTableOptions(
-                                table, "currency", "WHERE rate = 114", scanLatest),
+                                table, "currency", "WHERE rate = 114", SCAN_LATEST),
                         Arrays.asList(changelogRow("+I", "Euro"), changelogRow("-U", "Euro")))
                 .close();
     }
@@ -1143,10 +1135,11 @@ public class StreamingReadWriteTableWithKafkaLogITCase extends KafkaTableTestBas
                         "I");
 
         String table =
-                createTable(
+                createTableWithKafkaLog(
                         Arrays.asList("currency STRING", "rate BIGINT", "dt STRING"),
                         Collections.emptyList(),
-                        Collections.singletonList("dt"));
+                        Collections.singletonList("dt"),
+                        false);
 
         insertIntoFromTable(temporaryTable, table);
 
@@ -1167,10 +1160,11 @@ public class StreamingReadWriteTableWithKafkaLogITCase extends KafkaTableTestBas
                         "I");
 
         table =
-                createTable(
+                createTableWithKafkaLog(
                         Arrays.asList("currency STRING", "rate BIGINT", "dt STRING"),
                         Arrays.asList("currency", "dt"),
-                        Collections.singletonList("dt"));
+                        Collections.singletonList("dt"),
+                        false);
 
         insertIntoFromTable(temporaryTable, table);
 
@@ -1206,10 +1200,11 @@ public class StreamingReadWriteTableWithKafkaLogITCase extends KafkaTableTestBas
                         "I");
 
         table =
-                createTable(
+                createTableWithKafkaLog(
                         Arrays.asList("currency STRING", "rate BIGINT"),
                         Collections.singletonList("currency"),
-                        Collections.emptyList());
+                        Collections.emptyList(),
+                        false);
 
         insertIntoFromTable(temporaryTable, table);
 
@@ -1235,10 +1230,11 @@ public class StreamingReadWriteTableWithKafkaLogITCase extends KafkaTableTestBas
                         "I");
 
         table =
-                createTable(
+                createTableWithKafkaLog(
                         Arrays.asList("currency STRING", "rate BIGINT"),
                         Collections.emptyList(),
-                        Collections.emptyList());
+                        Collections.emptyList(),
+                        false);
 
         insertIntoFromTable(temporaryTable, table);
 
@@ -1278,10 +1274,11 @@ public class StreamingReadWriteTableWithKafkaLogITCase extends KafkaTableTestBas
                         "I");
 
         String table =
-                createTable(
+                createTableWithKafkaLog(
                         Arrays.asList("currency STRING", "rate BIGINT"),
                         Collections.emptyList(),
-                        Collections.emptyList());
+                        Collections.emptyList(),
+                        false);
 
         insertIntoFromTable(temporaryTable, table);
 
@@ -1322,10 +1319,11 @@ public class StreamingReadWriteTableWithKafkaLogITCase extends KafkaTableTestBas
                         "I,UA,UB,D");
 
         String table =
-                createTable(
+                createTableWithKafkaLog(
                         Arrays.asList("currency STRING", "rate BIGINT", "dt STRING"),
                         Collections.emptyList(),
-                        Collections.singletonList("dt"));
+                        Collections.singletonList("dt"),
+                        false);
 
         insertIntoFromTable(temporaryTable, table);
 
@@ -1371,10 +1369,11 @@ public class StreamingReadWriteTableWithKafkaLogITCase extends KafkaTableTestBas
                         "I,UA,D");
 
         table =
-                createTable(
+                createTableWithKafkaLog(
                         Arrays.asList("currency STRING", "rate BIGINT", "dt STRING"),
                         Arrays.asList("currency", "dt"),
-                        Collections.singletonList("dt"));
+                        Collections.singletonList("dt"),
+                        false);
 
         insertIntoFromTable(temporaryTable, table);
 
@@ -1395,50 +1394,6 @@ public class StreamingReadWriteTableWithKafkaLogITCase extends KafkaTableTestBas
     // ----------------------------------------------------------------------------------------------------------------
     // Tools
     // ----------------------------------------------------------------------------------------------------------------
-
-    private String createTable(
-            List<String> fieldsSpec, List<String> primaryKeys, List<String> partitionKeys)
-            throws Exception {
-        return createTable(fieldsSpec, primaryKeys, partitionKeys, false);
-    }
-
-    private String createTable(
-            List<String> fieldsSpec,
-            List<String> primaryKeys,
-            List<String> partitionKeys,
-            boolean manuallyCreateLogTable)
-            throws Exception {
-        String topic = "topic_" + UUID.randomUUID();
-        String table =
-                ReadWriteTableTestUtil.createTable(
-                        fieldsSpec,
-                        primaryKeys,
-                        partitionKeys,
-                        new HashMap<String, String>() {
-                            {
-                                put(LOG_SYSTEM.key(), "kafka");
-                                put(BOOTSTRAP_SERVERS.key(), getBootstrapServers());
-                                put(TOPIC.key(), topic);
-                            }
-                        });
-
-        if (manuallyCreateLogTable) {
-            createKafkaLogTable(topic);
-        }
-
-        return table;
-    }
-
-    private void createKafkaLogTable(String topic) throws Exception {
-        Properties properties = new Properties();
-        properties.put("bootstrap.servers", getBootstrapServers());
-
-        try (AdminClient adminClient = AdminClient.create(properties)) {
-            NewTopic topicObj =
-                    new NewTopic(topic, Optional.of(1), Optional.empty()).configs(new HashMap<>());
-            adminClient.createTopics(Collections.singleton(topicObj)).all().get();
-        }
-    }
 
     private Map<String, String> scanFromTimeStampMillis(Long timeStampMillis) {
         return new HashMap<String, String>() {
