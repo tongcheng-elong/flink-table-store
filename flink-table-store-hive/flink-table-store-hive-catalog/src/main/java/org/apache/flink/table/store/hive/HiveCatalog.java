@@ -439,7 +439,8 @@ public class HiveCatalog extends AbstractCatalog {
 
     private SchemaManager schemaManager(Identifier identifier) {
         checkIdentifierUpperCase(identifier);
-        return new SchemaManager(fileIO, super.getTableLocation(identifier)).withLock(lock(identifier));
+        return new SchemaManager(fileIO, super.getTableLocation(identifier))
+                .withLock(lock(identifier));
     }
 
     private Lock lock(Identifier identifier) {
