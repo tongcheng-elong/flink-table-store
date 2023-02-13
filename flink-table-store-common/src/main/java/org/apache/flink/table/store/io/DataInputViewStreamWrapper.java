@@ -16,24 +16,30 @@
  * limitations under the License.
  */
 
-package org.apache.flink.table.store.connector;
+package org.apache.flink.table.store.io;
 
-import org.apache.flink.table.factories.DynamicTableFactory;
-import org.apache.flink.table.factories.FactoryUtil;
+import org.apache.flink.annotation.PublicEvolving;
 
-import java.util.Map;
+import java.io.DataInputStream;
+import java.io.EOFException;
+import java.io.IOException;
+import java.io.InputStream;
 
-/** Table Store {@link DynamicTableFactory.Context}. */
-public class TableStoreDynamicContext extends FactoryUtil.DefaultDynamicTableContext {
+/**
+ * Utility class that turns an {@link InputStream} into a {@link
+ * org.apache.flink.core.memory.DataInputView}.
+ */
+@PublicEvolving
+public class DataInputViewStreamWrapper extends DataInputStream implements DataInputView {
 
-    public TableStoreDynamicContext(
-            DynamicTableFactory.Context context, Map<String, String> logOptions) {
-        super(
-                context.getObjectIdentifier(),
-                context.getCatalogTable().copy(logOptions),
-                logOptions,
-                context.getConfiguration(),
-                context.getClassLoader(),
-                context.isTemporary());
+    public DataInputViewStreamWrapper(InputStream in) {
+        super(in);
+    }
+
+    @Override
+    public void skipBytesToRead(int numBytes) throws IOException {
+        if (skipBytes(numBytes) != numBytes) {
+            throw new EOFException("Could not skip " + numBytes + " bytes.");
+        }
     }
 }

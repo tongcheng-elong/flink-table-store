@@ -16,23 +16,30 @@
  * limitations under the License.
  */
 
-package org.apache.flink.table.store.connector;
+package org.apache.flink.table.store.data.serializer;
 
-import org.apache.flink.table.factories.DynamicTableFactory;
-import org.apache.flink.table.factories.FactoryUtil;
+import java.util.Random;
 
-import java.util.Map;
+/** Test for {@link ShortSerializer}. */
+public class ShortSerializerTest extends SerializerTestBase<Short> {
 
-/** Table Store {@link DynamicTableFactory.Context}. */
-public class TableStoreDynamicContext extends FactoryUtil.DefaultDynamicTableContext {
+    @Override
+    protected Serializer<Short> createSerializer() {
+        return ShortSerializer.INSTANCE;
+    }
 
-    public TableStoreDynamicContext(
-            DynamicTableFactory.Context context, Map<String, String> logOptions) {
-        super(
-                context.getObjectIdentifier(),
-                context.getCatalogTable().copy(logOptions),
-                context.getConfiguration(),
-                context.getClassLoader(),
-                context.isTemporary());
+    @Override
+    protected boolean deepEquals(Short t1, Short t2) {
+        return t1.equals(t2);
+    }
+
+    @Override
+    protected Short[] getTestData() {
+        Random rnd = new Random(874597969123412341L);
+        short rndShort = (short) rnd.nextInt();
+
+        return new Short[] {
+            0, 1, -1, Short.MAX_VALUE, Short.MIN_VALUE, rndShort, (short) -rndShort
+        };
     }
 }

@@ -35,7 +35,7 @@ public class IntSerializerTest extends SerializerTestBase<Integer> {
 
     @Override
     protected Integer[] getTestData() {
-        Random rnd = new Random(874597969123412341L);
+        Random rnd = new Random();
         int rndInt = rnd.nextInt();
 
         return new Integer[] {0, 1, -1, Integer.MAX_VALUE, Integer.MIN_VALUE, rndInt, -rndInt};

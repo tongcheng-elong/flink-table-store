@@ -16,28 +16,29 @@
  * limitations under the License.
  */
 
-package org.apache.flink.table.store.connector;
+package org.apache.flink.table.store.io;
 
-import org.apache.flink.configuration.ConfigOption;
-import org.apache.flink.table.factories.Factory;
+import org.apache.flink.annotation.Internal;
 
-import java.util.Set;
+import java.io.IOException;
+import java.io.OutputStream;
 
-/** Default implementation of {@link ManagedTableFactory}. */
-public class TableStoreManagedFactory implements Factory {
+/** An output stream that draws its data from a {@link DataOutputView}. */
+@Internal
+public class DataOutputViewStream extends OutputStream {
+    protected DataOutputView outputView;
 
-    @Override
-    public String factoryIdentifier() {
-        return "_DUMMY_";
+    public DataOutputViewStream(DataOutputView outputView) {
+        this.outputView = outputView;
     }
 
     @Override
-    public Set<ConfigOption<?>> requiredOptions() {
-        throw new UnsupportedOperationException();
+    public void write(int b) throws IOException {
+        outputView.writeByte(b);
     }
 
     @Override
-    public Set<ConfigOption<?>> optionalOptions() {
-        throw new UnsupportedOperationException();
+    public void write(byte[] b, int off, int len) throws IOException {
+        outputView.write(b, off, len);
     }
 }
