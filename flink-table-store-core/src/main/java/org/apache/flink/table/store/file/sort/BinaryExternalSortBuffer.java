@@ -19,11 +19,10 @@
 package org.apache.flink.table.store.file.sort;
 
 import org.apache.flink.annotation.VisibleForTesting;
-import org.apache.flink.configuration.MemorySize;
 import org.apache.flink.table.store.codegen.RecordComparator;
 import org.apache.flink.table.store.data.BinaryRow;
-import org.apache.flink.table.store.data.BinaryRowSerializer;
 import org.apache.flink.table.store.data.InternalRow;
+import org.apache.flink.table.store.data.serializer.BinaryRowSerializer;
 import org.apache.flink.table.store.file.compression.BlockCompressionFactory;
 import org.apache.flink.table.store.file.compression.Lz4BlockCompressionFactory;
 import org.apache.flink.table.store.file.disk.ChannelWithMeta;
@@ -32,6 +31,7 @@ import org.apache.flink.table.store.file.disk.FileChannelUtil;
 import org.apache.flink.table.store.file.disk.FileIOChannel;
 import org.apache.flink.table.store.file.disk.IOManager;
 import org.apache.flink.table.store.file.utils.MutableObjectIterator;
+import org.apache.flink.table.store.options.MemorySize;
 
 import java.io.IOException;
 import java.util.ArrayList;

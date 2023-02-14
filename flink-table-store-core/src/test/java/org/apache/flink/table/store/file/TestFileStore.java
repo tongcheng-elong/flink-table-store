@@ -18,11 +18,9 @@
 
 package org.apache.flink.table.store.file;
 
-import org.apache.flink.configuration.Configuration;
-import org.apache.flink.configuration.MemorySize;
 import org.apache.flink.table.store.CoreOptions;
 import org.apache.flink.table.store.data.BinaryRow;
-import org.apache.flink.table.store.data.RowDataSerializer;
+import org.apache.flink.table.store.data.serializer.InternalRowSerializer;
 import org.apache.flink.table.store.file.io.DataFileMeta;
 import org.apache.flink.table.store.file.manifest.ManifestCommittable;
 import org.apache.flink.table.store.file.manifest.ManifestEntry;
@@ -47,6 +45,8 @@ import org.apache.flink.table.store.file.utils.SnapshotManager;
 import org.apache.flink.table.store.fs.FileIO;
 import org.apache.flink.table.store.fs.FileIOFinder;
 import org.apache.flink.table.store.fs.Path;
+import org.apache.flink.table.store.options.MemorySize;
+import org.apache.flink.table.store.options.Options;
 import org.apache.flink.table.store.table.sink.FileCommittable;
 import org.apache.flink.table.store.table.source.DataSplit;
 import org.apache.flink.table.store.types.RowType;
@@ -85,8 +85,8 @@ public class TestFileStore extends KeyValueFileStore {
 
     private final String root;
     private final FileIO fileIO;
-    private final RowDataSerializer keySerializer;
-    private final RowDataSerializer valueSerializer;
+    private final InternalRowSerializer keySerializer;
+    private final InternalRowSerializer valueSerializer;
     private final String commitUser;
 
     private long commitIdentifier;
@@ -112,8 +112,8 @@ public class TestFileStore extends KeyValueFileStore {
                 mfFactory);
         this.root = root;
         this.fileIO = FileIOFinder.find(new Path(root));
-        this.keySerializer = new RowDataSerializer(keyType);
-        this.valueSerializer = new RowDataSerializer(valueType);
+        this.keySerializer = new InternalRowSerializer(keyType);
+        this.valueSerializer = new InternalRowSerializer(valueType);
         this.commitUser = UUID.randomUUID().toString();
 
         this.commitIdentifier = 0L;
@@ -516,7 +516,7 @@ public class TestFileStore extends KeyValueFileStore {
         }
 
         public TestFileStore build() {
-            Configuration conf = new Configuration();
+            Options conf = new Options();
 
             conf.set(CoreOptions.WRITE_BUFFER_SIZE, WRITE_BUFFER_SIZE);
             conf.set(CoreOptions.PAGE_SIZE, PAGE_SIZE);
