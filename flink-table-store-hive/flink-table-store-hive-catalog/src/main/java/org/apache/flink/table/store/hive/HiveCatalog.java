@@ -90,7 +90,7 @@ public class HiveCatalog extends AbstractCatalog {
     }
 
     @Override
-    public Path getTableLocation(Identifier identifier) {
+    public Path getDataTableLocation(Identifier identifier) {
         try {
             Table table = client.getTable(identifier.getDatabaseName(), identifier.getObjectName());
             return new Path(table.getSd().getLocation());
@@ -392,8 +392,7 @@ public class HiveCatalog extends AbstractCatalog {
                 schema.fields().stream()
                         .map(this::convertToFieldSchema)
                         .collect(Collectors.toList()));
-        sd.setLocation(getDataTableLocation(identifier).toString());
-        sd.setLocation(super.getTableLocation(identifier).toString());
+        sd.setLocation(super.getDataTableLocation(identifier).toString());
 
         sd.setInputFormat(INPUT_FORMAT_CLASS_NAME);
         sd.setOutputFormat(OUTPUT_FORMAT_CLASS_NAME);
@@ -454,9 +453,7 @@ public class HiveCatalog extends AbstractCatalog {
 
     private SchemaManager schemaManager(Identifier identifier) {
         checkIdentifierUpperCase(identifier);
-        return new SchemaManager(fileIO, getDataTableLocation(identifier))
-                .withLock(lock(identifier));
-        return new SchemaManager(fileIO, super.getTableLocation(identifier))
+        return new SchemaManager(fileIO, super.getDataTableLocation(identifier))
                 .withLock(lock(identifier));
     }
 
