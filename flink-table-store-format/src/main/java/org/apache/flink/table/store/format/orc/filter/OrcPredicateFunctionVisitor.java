@@ -123,7 +123,16 @@ public class OrcPredicateFunctionVisitor
 
     @Override
     public Optional<OrcFilters.Predicate> visitAnd(List<Optional<OrcFilters.Predicate>> children) {
-        return Optional.empty();
+        if (children.size() != 2) {
+            throw new RuntimeException("Illegal and children: " + children.size());
+        }
+
+        Optional<OrcFilters.Predicate> c1 = children.get(0);
+        if (!c1.isPresent()) {
+            return Optional.empty();
+        }
+        Optional<OrcFilters.Predicate> c2 = children.get(1);
+        return c2.map(value -> new OrcFilters.And(c1.get(), value));
     }
 
     @Override
@@ -148,20 +157,12 @@ public class OrcPredicateFunctionVisitor
         if (litType == null) {
             return Optional.empty();
         }
-
-        String colName = fieldRef.name();
-
         // fetch literal and ensure it is serializable
         Object orcObj = toOrcObject(litType, literal);
-        Serializable serializableLiteral;
         // validate that literal is serializable
-        if (orcObj instanceof Serializable) {
-            serializableLiteral = (Serializable) orcObj;
-        } else {
-            return Optional.empty();
-        }
-
-        return Optional.of(func.apply(colName, litType, serializableLiteral));
+        return orcObj instanceof Serializable
+                ? Optional.of(func.apply(fieldRef.name(), litType, (Serializable) orcObj))
+                : Optional.empty();
     }
 
     @Nullable

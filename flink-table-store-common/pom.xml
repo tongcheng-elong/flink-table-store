@@ -38,15 +38,14 @@ under the License.
     <dependencies>
         <dependency>
             <groupId>org.apache.flink</groupId>
-            <artifactId>flink-table-code-splitter</artifactId>
-            <version>${flink.version}</version>
-            <scope>provided</scope>
+            <artifactId>flink-shaded-jackson</artifactId>
+            <version>${flink.shaded.jackson.version}-${flink.shaded.version}</version>
         </dependency>
 
         <dependency>
             <groupId>org.apache.flink</groupId>
-            <artifactId>flink-shaded-jackson</artifactId>
-            <version>${flink.shaded.jackson.version}-${flink.shaded.version}</version>
+            <artifactId>flink-shaded-guava</artifactId>
+            <version>${flink.shaded.guava.version}-${flink.shaded.version}</version>
         </dependency>
 
         <!-- Java compiler -->
@@ -54,14 +53,12 @@ under the License.
             <groupId>org.codehaus.janino</groupId>
             <artifactId>janino</artifactId>
             <version>${janino.version}</version>
-            <scope>provided</scope>
         </dependency>
 
         <dependency>
             <groupId>org.codehaus.janino</groupId>
             <artifactId>commons-compiler</artifactId>
             <version>${janino.version}</version>
-            <scope>provided</scope>
         </dependency>
 
         <dependency>
@@ -197,12 +194,6 @@ under the License.
                 </exclusion>
             </exclusions>
         </dependency>
-        <dependency>
-            <groupId>org.apache.flink</groupId>
-            <artifactId>flink-table-common</artifactId>
-            <version>1.16.0</version>
-            <scope>test</scope>
-        </dependency>
     </dependencies>
 
     <build>
@@ -247,12 +238,32 @@ under the License.
                             <artifactSet>
                                 <includes combine.children="append">
                                     <include>org.antlr:antlr4-runtime</include>
+                                    <include>org.codehaus.janino:*</include>
                                 </includes>
                             </artifactSet>
+                            <filters>
+                                <filter>
+                                    <!-- Do not copy the signatures in the META-INF folder and factories in janino.
+                                    Otherwise, this might cause SecurityExceptions or be incompatible with spark/hive when using the JAR. -->
+                                    <artifact>org.codehaus.janino:*</artifact>
+                                    <excludes>
+                                        <exclude>META-INF/**</exclude>
+                                        <exclude>org.codehaus.commons.compiler.properties</exclude>
+                                    </excludes>
+                                </filter>
+                            </filters>
                             <relocations>
                                 <relocation>
                                     <pattern>org.antlr.v4.runtime</pattern>
                                     <shadedPattern>org.apache.flink.table.store.shaded.org.antlr.v4.runtime</shadedPattern>
+                                </relocation>
+                                <relocation>
+                                    <pattern>org.codehaus.janino</pattern>
+                                    <shadedPattern>org.apache.flink.table.store.shaded.org.codehaus.janino</shadedPattern>
+                                </relocation>
+                                <relocation>
+                                    <pattern>org.codehaus.commons</pattern>
+                                    <shadedPattern>org.apache.flink.table.store.shaded.org.codehaus.commons</shadedPattern>
                                 </relocation>
                             </relocations>
                         </configuration>

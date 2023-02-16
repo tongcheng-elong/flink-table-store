@@ -31,6 +31,8 @@ import org.junit.jupiter.api.Test;
 
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.stream.Collectors;
+import java.util.stream.LongStream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -73,6 +75,45 @@ public class OrcFilterConverterTest {
                                 new OrcFilters.Equals("long1", PredicateLeaf.Type.LONG, 1),
                                 new OrcFilters.Equals("long1", PredicateLeaf.Type.LONG, 2)),
                         new OrcFilters.Equals("long1", PredicateLeaf.Type.LONG, 3)));
+
+        test(
+                builder.between(0, 1L, 3L),
+                new OrcFilters.And(
+                        new OrcFilters.Not(
+                                new OrcFilters.LessThan("long1", PredicateLeaf.Type.LONG, 1)),
+                        new OrcFilters.LessThanEquals("long1", PredicateLeaf.Type.LONG, 3)));
+
+        test(
+                builder.notIn(0, Arrays.asList(1L, 2L, 3L)),
+                new OrcFilters.And(
+                        new OrcFilters.And(
+                                new OrcFilters.Not(
+                                        new OrcFilters.Equals("long1", PredicateLeaf.Type.LONG, 1)),
+                                new OrcFilters.Not(
+                                        new OrcFilters.Equals(
+                                                "long1", PredicateLeaf.Type.LONG, 2))),
+                        new OrcFilters.Not(
+                                new OrcFilters.Equals("long1", PredicateLeaf.Type.LONG, 3))));
+
+        assertThat(
+                        builder.in(
+                                        0,
+                                        LongStream.range(1L, 22L)
+                                                .boxed()
+                                                .collect(Collectors.toList()))
+                                .visit(OrcPredicateFunctionVisitor.VISITOR)
+                                .isPresent())
+                .isFalse();
+
+        assertThat(
+                        builder.notIn(
+                                        0,
+                                        LongStream.range(1L, 22L)
+                                                .boxed()
+                                                .collect(Collectors.toList()))
+                                .visit(OrcPredicateFunctionVisitor.VISITOR)
+                                .isPresent())
+                .isFalse();
     }
 
     private void test(Predicate predicate, OrcFilters.Predicate orcPredicate) {

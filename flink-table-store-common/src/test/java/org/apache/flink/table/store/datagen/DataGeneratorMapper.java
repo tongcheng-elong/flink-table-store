@@ -18,7 +18,7 @@
 
 package org.apache.flink.table.store.datagen;
 
-import org.apache.flink.util.function.SerializableFunction;
+import org.apache.flink.table.store.utils.SerializableFunction;
 
 /** Utility for mapping the output of a {@link DataGenerator}. */
 public class DataGeneratorMapper<A, B> implements DataGenerator<B> {
