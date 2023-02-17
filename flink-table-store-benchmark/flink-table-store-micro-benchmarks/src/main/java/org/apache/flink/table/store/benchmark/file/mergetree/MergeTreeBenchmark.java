@@ -44,12 +44,12 @@ import org.apache.flink.table.store.file.schema.KeyValueFieldsExtractor;
 import org.apache.flink.table.store.file.schema.SchemaManager;
 import org.apache.flink.table.store.file.schema.TableSchema;
 import org.apache.flink.table.store.file.utils.FileStorePathFactory;
-import org.apache.flink.table.store.file.utils.RecordReaderIterator;
 import org.apache.flink.table.store.file.utils.RecordWriter;
 import org.apache.flink.table.store.format.FileFormat;
 import org.apache.flink.table.store.fs.Path;
 import org.apache.flink.table.store.fs.local.LocalFileIO;
 import org.apache.flink.table.store.options.Options;
+import org.apache.flink.table.store.reader.RecordReaderIterator;
 import org.apache.flink.table.store.types.DataField;
 import org.apache.flink.table.store.types.IntType;
 import org.apache.flink.table.store.types.RowKind;
@@ -177,8 +177,12 @@ public class MergeTreeBenchmark {
                         flushingFormat,
                         pathFactory,
                         options.targetFileSize());
-        writerFactory = writerBuilder.build(BinaryRowDataUtil.EMPTY_ROW, 0);
-        compactWriterFactory = writerBuilder.build(BinaryRowDataUtil.EMPTY_ROW, 0);
+        writerFactory =
+                writerBuilder.build(
+                        BinaryRowDataUtil.EMPTY_ROW, 0, options.fileCompressionPerLevel());
+        compactWriterFactory =
+                writerBuilder.build(
+                        BinaryRowDataUtil.EMPTY_ROW, 0, options.fileCompressionPerLevel());
         return createMergeTreeWriter(Collections.emptyList());
     }
 
