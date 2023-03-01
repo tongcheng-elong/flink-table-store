@@ -19,8 +19,8 @@
 package org.apache.flink.table.store.table.system;
 
 import org.apache.flink.table.store.data.BinaryString;
-import org.apache.flink.table.store.data.GenericRow;
 import org.apache.flink.table.store.data.InternalRow;
+import org.apache.flink.table.store.data.LazyGenericRow;
 import org.apache.flink.table.store.file.io.DataFileMeta;
 import org.apache.flink.table.store.file.io.DataFilePathFactory;
 import org.apache.flink.table.store.file.predicate.Predicate;
@@ -43,6 +43,7 @@ import org.apache.flink.table.store.table.source.TableScan;
 import org.apache.flink.table.store.table.source.snapshot.StaticDataFileSnapshotEnumerator;
 import org.apache.flink.table.store.types.BigIntType;
 import org.apache.flink.table.store.types.DataField;
+import org.apache.flink.table.store.types.DataTypes;
 import org.apache.flink.table.store.types.IntType;
 import org.apache.flink.table.store.types.RowType;
 import org.apache.flink.table.store.utils.ProjectedRow;
@@ -56,14 +57,16 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.TreeMap;
+import java.util.function.Function;
+import java.util.function.Supplier;
 
 import static org.apache.flink.table.store.file.catalog.Catalog.SYSTEM_TABLE_SPLITTER;
-import static org.apache.flink.table.store.utils.Preconditions.checkArgument;
 
 /** A {@link Table} for showing files of a snapshot in specific table. */
 public class FilesTable implements Table {
@@ -75,28 +78,26 @@ public class FilesTable implements Table {
     public static final RowType TABLE_TYPE =
             new RowType(
                     Arrays.asList(
-                            new DataField(0, "snapshot_id", new BigIntType(false)),
-                            new DataField(1, "partition", SerializationUtils.newStringType(true)),
-                            new DataField(2, "bucket", new IntType(false)),
-                            new DataField(3, "file_path", SerializationUtils.newStringType(false)),
+                            new DataField(0, "partition", SerializationUtils.newStringType(true)),
+                            new DataField(1, "bucket", new IntType(false)),
+                            new DataField(2, "file_path", SerializationUtils.newStringType(false)),
                             new DataField(
-                                    4, "file_format", SerializationUtils.newStringType(false)),
-                            new DataField(5, "schema_id", new BigIntType(false)),
-                            new DataField(6, "level", new IntType(false)),
-                            new DataField(7, "record_count", new BigIntType(false)),
-                            new DataField(8, "file_size_in_bytes", new BigIntType(false)),
-                            new DataField(9, "min_key", SerializationUtils.newStringType(true)),
-                            new DataField(10, "max_key", SerializationUtils.newStringType(true)),
+                                    3, "file_format", SerializationUtils.newStringType(false)),
+                            new DataField(4, "schema_id", new BigIntType(false)),
+                            new DataField(5, "level", new IntType(false)),
+                            new DataField(6, "record_count", new BigIntType(false)),
+                            new DataField(7, "file_size_in_bytes", new BigIntType(false)),
+                            new DataField(8, "min_key", SerializationUtils.newStringType(true)),
+                            new DataField(9, "max_key", SerializationUtils.newStringType(true)),
                             new DataField(
-                                    11,
+                                    10,
                                     "null_value_counts",
                                     SerializationUtils.newStringType(false)),
                             new DataField(
-                                    12, "min_value_stats", SerializationUtils.newStringType(false)),
+                                    11, "min_value_stats", SerializationUtils.newStringType(false)),
                             new DataField(
-                                    13,
-                                    "max_value_stats",
-                                    SerializationUtils.newStringType(false))));
+                                    12, "max_value_stats", SerializationUtils.newStringType(false)),
+                            new DataField(13, "creation_time", DataTypes.TIMESTAMP_MILLIS())));
 
     private final FileStoreTable storeTable;
 
@@ -193,6 +194,7 @@ public class FilesTable implements Table {
     }
 
     private static class FilesRead implements TableRead {
+
         private final SchemaManager schemaManager;
 
         private int[][] projection;
@@ -219,6 +221,7 @@ public class FilesTable implements Table {
                 throw new IllegalArgumentException("Unsupported split: " + split.getClass());
             }
             FilesSplit filesSplit = (FilesSplit) split;
+            FileStoreTable table = filesSplit.storeTable;
             DataTableScan.DataFilePlan dataFilePlan = filesSplit.dataFilePlan();
             if (dataFilePlan == null) {
                 return new IteratorRecordReader<>(Collections.emptyIterator());
@@ -231,22 +234,46 @@ public class FilesTable implements Table {
                     new FieldStatsConverters(
                             sid -> schemaManager.schema(sid).fields(),
                             dataFilePlan.snapshotId == null
-                                    ? filesSplit.storeTable.schema().id()
-                                    : filesSplit
-                                            .storeTable
-                                            .snapshotManager()
+                                    ? table.schema().id()
+                                    : table.snapshotManager()
                                             .snapshot(dataFilePlan.snapshotId)
                                             .schemaId());
+
+            RowDataToObjectArrayConverter partitionConverter =
+                    new RowDataToObjectArrayConverter(table.schema().logicalPartitionType());
+
+            Function<Long, RowDataToObjectArrayConverter> keyConverters =
+                    new Function<Long, RowDataToObjectArrayConverter>() {
+                        final Map<Long, RowDataToObjectArrayConverter> keyConverterMap =
+                                new HashMap<>();
+
+                        @Override
+                        public RowDataToObjectArrayConverter apply(Long schemaId) {
+                            return keyConverterMap.computeIfAbsent(
+                                    schemaId,
+                                    k -> {
+                                        TableSchema dataSchema = schemaManager.schema(schemaId);
+                                        RowType keysType =
+                                                dataSchema.logicalTrimmedPrimaryKeysType();
+                                        return keysType.getFieldCount() > 0
+                                                ? new RowDataToObjectArrayConverter(
+                                                        dataSchema.logicalTrimmedPrimaryKeysType())
+                                                : new RowDataToObjectArrayConverter(
+                                                        dataSchema.logicalRowType());
+                                    });
+                        }
+                    };
             for (DataSplit dataSplit : dataFilePlan.splits) {
                 iteratorList.add(
                         Iterators.transform(
                                 dataSplit.files().iterator(),
-                                v ->
+                                file ->
                                         toRow(
                                                 dataSplit,
-                                                dataFilePlan.snapshotId,
-                                                v,
-                                                filesSplit.storeTable,
+                                                partitionConverter,
+                                                keyConverters,
+                                                file,
+                                                table.getSchemaFieldStats(file),
                                                 fieldStatsConverters)));
             }
             Iterator<InternalRow> rows = Iterators.concat(iteratorList.iterator());
@@ -258,75 +285,117 @@ public class FilesTable implements Table {
             return new IteratorRecordReader<>(rows);
         }
 
-        private InternalRow toRow(
+        private LazyGenericRow toRow(
                 DataSplit dataSplit,
-                Long snapshotId,
+                RowDataToObjectArrayConverter partitionConverter,
+                Function<Long, RowDataToObjectArrayConverter> keyConverters,
                 DataFileMeta dataFileMeta,
-                FileStoreTable storeTable,
+                BinaryTableStats tableStats,
                 FieldStatsConverters fieldStatsConverters) {
-            TableSchema tableSchema =
-                    schemaManager.schema(
-                            storeTable.snapshotManager().snapshot(snapshotId).schemaId());
-            RowDataToObjectArrayConverter partitionConverter =
-                    new RowDataToObjectArrayConverter(tableSchema.logicalPartitionType());
+            StatsLazyGetter statsGetter =
+                    new StatsLazyGetter(tableStats, dataFileMeta, fieldStatsConverters);
+            @SuppressWarnings("unchecked")
+            Supplier<Object>[] fields =
+                    new Supplier[] {
+                        () ->
+                                dataSplit.partition() == null
+                                        ? null
+                                        : BinaryString.fromString(
+                                                Arrays.toString(
+                                                        partitionConverter.convert(
+                                                                dataSplit.partition()))),
+                        dataSplit::bucket,
+                        () -> BinaryString.fromString(dataFileMeta.fileName()),
+                        () ->
+                                BinaryString.fromString(
+                                        DataFilePathFactory.formatIdentifier(
+                                                dataFileMeta.fileName())),
+                        dataFileMeta::schemaId,
+                        dataFileMeta::level,
+                        dataFileMeta::rowCount,
+                        dataFileMeta::fileSize,
+                        () ->
+                                dataFileMeta.minKey().getFieldCount() <= 0
+                                        ? null
+                                        : BinaryString.fromString(
+                                                Arrays.toString(
+                                                        keyConverters
+                                                                .apply(dataFileMeta.schemaId())
+                                                                .convert(dataFileMeta.minKey()))),
+                        () ->
+                                dataFileMeta.minKey().getFieldCount() <= 0
+                                        ? null
+                                        : BinaryString.fromString(
+                                                Arrays.toString(
+                                                        keyConverters
+                                                                .apply(dataFileMeta.schemaId())
+                                                                .convert(dataFileMeta.maxKey()))),
+                        () -> BinaryString.fromString(statsGetter.nullValueCounts().toString()),
+                        () -> BinaryString.fromString(statsGetter.lowerValueBounds().toString()),
+                        () -> BinaryString.fromString(statsGetter.upperValueBounds().toString()),
+                        dataFileMeta::creationTime
+                    };
 
-            TableSchema dataSchema = schemaManager.schema(dataFileMeta.schemaId());
-            RowType keysType = dataSchema.logicalTrimmedPrimaryKeysType();
-            RowDataToObjectArrayConverter keyConverter =
-                    keysType.getFieldCount() > 0
-                            ? new RowDataToObjectArrayConverter(
-                                    dataSchema.logicalTrimmedPrimaryKeysType())
-                            : new RowDataToObjectArrayConverter(dataSchema.logicalRowType());
+            return new LazyGenericRow(fields);
+        }
+    }
 
-            // Create field stats array serializer with schema evolution
+    private static class StatsLazyGetter {
+
+        private final BinaryTableStats tableStats;
+        private final DataFileMeta file;
+        private final FieldStatsConverters fieldStatsConverters;
+
+        private Map<String, Long> lazyNullValueCounts;
+        private Map<String, Object> lazyLowerValueBounds;
+        private Map<String, Object> lazyUpperValueBounds;
+
+        private StatsLazyGetter(
+                BinaryTableStats tableStats,
+                DataFileMeta file,
+                FieldStatsConverters fieldStatsConverters) {
+            this.tableStats = tableStats;
+            this.file = file;
+            this.fieldStatsConverters = fieldStatsConverters;
+        }
+
+        private void initialize() {
             FieldStatsArraySerializer fieldStatsArraySerializer =
-                    fieldStatsConverters.getOrCreate(dataSchema.id());
-
-            // Get schema field stats for different table
-            BinaryTableStats schemaFieldStats = storeTable.getSchemaFieldStats(dataFileMeta);
-
+                    fieldStatsConverters.getOrCreate(file.schemaId());
             // Create value stats
-            List<String> fieldNames = tableSchema.fieldNames();
             FieldStats[] fieldStatsArray =
-                    schemaFieldStats.fields(fieldStatsArraySerializer, dataFileMeta.rowCount());
-            checkArgument(fieldNames.size() == fieldStatsArray.length);
-            Map<String, Long> nullValueCounts = new TreeMap<>();
-            Map<String, Object> lowerValueBounds = new TreeMap<>();
-            Map<String, Object> upperValueBounds = new TreeMap<>();
+                    tableStats.fields(fieldStatsArraySerializer, file.rowCount());
+            lazyNullValueCounts = new TreeMap<>();
+            lazyLowerValueBounds = new TreeMap<>();
+            lazyUpperValueBounds = new TreeMap<>();
             for (int i = 0; i < fieldStatsArray.length; i++) {
-                String fieldName = fieldNames.get(i);
+                String fieldName = fieldStatsConverters.tableDataFields().get(i).name();
                 FieldStats fieldStats = fieldStatsArray[i];
-                nullValueCounts.put(fieldName, fieldStats.nullCount());
-                lowerValueBounds.put(fieldName, fieldStats.minValue());
-                upperValueBounds.put(fieldName, fieldStats.maxValue());
+                lazyNullValueCounts.put(fieldName, fieldStats.nullCount());
+                lazyLowerValueBounds.put(fieldName, fieldStats.minValue());
+                lazyUpperValueBounds.put(fieldName, fieldStats.maxValue());
             }
+        }
 
-            return GenericRow.of(
-                    snapshotId,
-                    dataSplit.partition() == null
-                            ? null
-                            : BinaryString.fromString(
-                                    Arrays.toString(
-                                            partitionConverter.convert(dataSplit.partition()))),
-                    dataSplit.bucket(),
-                    BinaryString.fromString(dataFileMeta.fileName()),
-                    BinaryString.fromString(
-                            DataFilePathFactory.formatIdentifier(dataFileMeta.fileName())),
-                    dataFileMeta.schemaId(),
-                    dataFileMeta.level(),
-                    dataFileMeta.rowCount(),
-                    dataFileMeta.fileSize(),
-                    dataFileMeta.minKey().getFieldCount() <= 0
-                            ? null
-                            : BinaryString.fromString(
-                                    Arrays.toString(keyConverter.convert(dataFileMeta.minKey()))),
-                    dataFileMeta.minKey().getFieldCount() <= 0
-                            ? null
-                            : BinaryString.fromString(
-                                    Arrays.toString(keyConverter.convert(dataFileMeta.maxKey()))),
-                    BinaryString.fromString(nullValueCounts.toString()),
-                    BinaryString.fromString(lowerValueBounds.toString()),
-                    BinaryString.fromString(upperValueBounds.toString()));
+        private Map<String, Long> nullValueCounts() {
+            if (lazyNullValueCounts == null) {
+                initialize();
+            }
+            return lazyNullValueCounts;
+        }
+
+        private Map<String, Object> lowerValueBounds() {
+            if (lazyLowerValueBounds == null) {
+                initialize();
+            }
+            return lazyLowerValueBounds;
+        }
+
+        private Map<String, Object> upperValueBounds() {
+            if (lazyUpperValueBounds == null) {
+                initialize();
+            }
+            return lazyUpperValueBounds;
         }
     }
 }

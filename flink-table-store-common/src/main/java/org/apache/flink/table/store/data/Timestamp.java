@@ -23,6 +23,7 @@ import org.apache.flink.table.store.types.LocalZonedTimestampType;
 import org.apache.flink.table.store.types.TimestampType;
 import org.apache.flink.table.store.utils.Preconditions;
 
+import java.io.Serializable;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -39,7 +40,9 @@ import java.time.LocalTime;
  * @since 0.4.0
  */
 @Experimental
-public final class Timestamp implements Comparable<Timestamp> {
+public final class Timestamp implements Comparable<Timestamp>, Serializable {
+
+    private static final long serialVersionUID = 1L;
 
     // the number of milliseconds in a day
     private static final long MILLIS_PER_DAY = 86400000; // = 24 * 60 * 60 * 1000
@@ -134,6 +137,11 @@ public final class Timestamp implements Comparable<Timestamp> {
     // ------------------------------------------------------------------------------------------
     // Constructor Utilities
     // ------------------------------------------------------------------------------------------
+
+    /** Creates an instance of {@link Timestamp} for now. */
+    public static Timestamp now() {
+        return fromLocalDateTime(LocalDateTime.now());
+    }
 
     /**
      * Creates an instance of {@link Timestamp} from milliseconds.
