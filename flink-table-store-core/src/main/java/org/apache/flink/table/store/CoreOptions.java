@@ -322,17 +322,6 @@ public class CoreOptions implements Serializable {
                                     + "This changelog file keeps the details of data changes, "
                                     + "it can be read directly during stream reads.");
 
-    public static final ConfigOption<Duration> CHANGELOG_PRODUCER_FULL_COMPACTION_TRIGGER_INTERVAL =
-            key("changelog-producer.compaction-interval")
-                    .durationType()
-                    .defaultValue(Duration.ofMinutes(30))
-                    .withDescription(
-                            "When "
-                                    + CHANGELOG_PRODUCER.key()
-                                    + " is set to "
-                                    + ChangelogProducer.FULL_COMPACTION.name()
-                                    + ", full compaction will be constantly triggered after this interval.");
-
     @Immutable
     public static final ConfigOption<String> SEQUENCE_FIELD =
             key("sequence.field")
@@ -489,6 +478,22 @@ public class CoreOptions implements Serializable {
                                                     + " By default, streaming read will read the full snapshot first. In order to"
                                                     + " avoid the disorder reading for partitions, you can open this option.")
                                     .build());
+
+    @Immutable
+    public static final ConfigOption<String> PRIMARY_KEY =
+            key("primary-key")
+                    .stringType()
+                    .noDefaultValue()
+                    .withDescription(
+                            "Define primary key by table options, cannot define primary key on DDL and table options at the same time.");
+
+    @Immutable
+    public static final ConfigOption<String> PARTITION =
+            key("partition")
+                    .stringType()
+                    .noDefaultValue()
+                    .withDescription(
+                            "Define partition by table options, cannot define partition on DDL and table options at the same time.");
 
     private final Options options;
 
@@ -689,10 +694,6 @@ public class CoreOptions implements Serializable {
 
     public Long scanSnapshotId() {
         return options.get(SCAN_SNAPSHOT_ID);
-    }
-
-    public Duration changelogProducerFullCompactionTriggerInterval() {
-        return options.get(CHANGELOG_PRODUCER_FULL_COMPACTION_TRIGGER_INTERVAL);
     }
 
     public Optional<String> sequenceField() {
