@@ -66,11 +66,10 @@ public class ContinuousDataFileSnapshotEnumerator implements SnapshotEnumerator 
         this.nextSnapshotId = nextSnapshotId;
     }
 
-    @Nullable
     @Override
-    public DataTableScan.DataFilePlan enumerate() {
+    public Result enumerate() {
         if (nextSnapshotId == null) {
-            return tryFirstEnumerate();
+            return planResult(tryFirstEnumerate());
         } else {
             return nextEnumerate();
         }
@@ -84,16 +83,20 @@ public class ContinuousDataFileSnapshotEnumerator implements SnapshotEnumerator 
         return plan;
     }
 
-    private DataTableScan.DataFilePlan nextEnumerate() {
+    private Result nextEnumerate() {
         while (true) {
             if (!snapshotManager.snapshotExists(nextSnapshotId)) {
                 LOG.debug(
                         "Next snapshot id {} does not exist, wait for the snapshot generation.",
                         nextSnapshotId);
-                return null;
+                return planResult(null);
             }
 
             Snapshot snapshot = snapshotManager.snapshot(nextSnapshotId);
+
+            if (followUpScanner.shouldEndInput(snapshot)) {
+                return finishedResult();
+            }
 
             // first check changes of overwrite
             if (snapshot.commitKind() == Snapshot.CommitKind.OVERWRITE
@@ -102,12 +105,12 @@ public class ContinuousDataFileSnapshotEnumerator implements SnapshotEnumerator 
                 DataTableScan.DataFilePlan overwritePlan =
                         scan.withSnapshot(nextSnapshotId).planOverwriteChanges();
                 nextSnapshotId++;
-                return overwritePlan;
+                return planResult(overwritePlan);
             } else if (followUpScanner.shouldScanSnapshot(snapshot)) {
                 LOG.debug("Find snapshot id {}.", nextSnapshotId);
                 DataTableScan.DataFilePlan plan = followUpScanner.getPlan(nextSnapshotId, scan);
                 nextSnapshotId++;
-                return plan;
+                return planResult(plan);
             } else {
                 nextSnapshotId++;
             }
@@ -179,18 +182,30 @@ public class ContinuousDataFileSnapshotEnumerator implements SnapshotEnumerator 
 
     private static FollowUpScanner createFollowUpScanner(DataTable table, DataTableScan scan) {
         CoreOptions.ChangelogProducer changelogProducer = table.options().changelogProducer();
-        if (changelogProducer == CoreOptions.ChangelogProducer.NONE) {
-            return new DeltaFollowUpScanner();
-        } else if (changelogProducer == CoreOptions.ChangelogProducer.INPUT) {
-            return new InputChangelogFollowUpScanner();
-        } else if (changelogProducer == CoreOptions.ChangelogProducer.FULL_COMPACTION) {
-            // this change in scan will affect both starting scanner and follow-up scanner
-            scan.withLevel(table.options().numLevels() - 1);
-            return new CompactionChangelogFollowUpScanner();
-        } else {
-            throw new UnsupportedOperationException(
-                    "Unknown changelog producer " + changelogProducer.name());
+        FollowUpScanner followUpScanner;
+        switch (changelogProducer) {
+            case NONE:
+                followUpScanner = new DeltaFollowUpScanner();
+                break;
+            case INPUT:
+                followUpScanner = new InputChangelogFollowUpScanner();
+                break;
+            case FULL_COMPACTION:
+                // this change in scan will affect both starting scanner and follow-up scanner
+                scan.withLevelFilter(level -> level == table.options().numLevels() - 1);
+                followUpScanner = new CompactionChangelogFollowUpScanner();
+                break;
+            default:
+                throw new UnsupportedOperationException(
+                        "Unknown changelog producer " + changelogProducer.name());
         }
+
+        Long boundedWatermark = table.options().scanBoundedWatermark();
+        if (boundedWatermark != null) {
+            followUpScanner =
+                    new BoundedWatermarkFollowUpScanner(followUpScanner, boundedWatermark);
+        }
+        return followUpScanner;
     }
 
     public static void validate(TableSchema schema) {
@@ -222,5 +237,26 @@ public class ContinuousDataFileSnapshotEnumerator implements SnapshotEnumerator 
 
         ContinuousDataFileSnapshotEnumerator create(
                 DataTable table, DataTableScan scan, @Nullable Long nextSnapshotId);
+
+        default boolean isBounded(DataTable table) {
+            return false;
+        }
+    }
+
+    /** A default {@link Factory} to create {@link ContinuousDataFileSnapshotEnumerator}. */
+    public static class DefaultFactory implements Factory {
+
+        private static final long serialVersionUID = 1L;
+
+        @Override
+        public ContinuousDataFileSnapshotEnumerator create(
+                DataTable table, DataTableScan scan, @Nullable Long nextSnapshotId) {
+            return ContinuousDataFileSnapshotEnumerator.create(table, scan, nextSnapshotId);
+        }
+
+        @Override
+        public boolean isBounded(DataTable table) {
+            return table.options().scanBoundedWatermark() != null;
+        }
     }
 }
