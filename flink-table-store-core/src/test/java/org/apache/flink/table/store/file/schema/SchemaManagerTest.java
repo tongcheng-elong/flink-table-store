@@ -23,6 +23,7 @@ import org.apache.flink.table.store.file.WriteMode;
 import org.apache.flink.table.store.file.utils.FailingFileIO;
 import org.apache.flink.table.store.fs.FileIOFinder;
 import org.apache.flink.table.store.fs.Path;
+import org.apache.flink.table.store.fs.local.LocalFileIO;
 import org.apache.flink.table.store.types.BigIntType;
 import org.apache.flink.table.store.types.DataField;
 import org.apache.flink.table.store.types.DoubleType;
@@ -61,6 +62,7 @@ public class SchemaManagerTest {
     @TempDir java.nio.file.Path tempDir;
 
     private SchemaManager manager;
+    private Path path;
 
     private final List<String> partitionKeys = Collections.singletonList("f0");
     private final List<String> primaryKeys = Arrays.asList("f0", "f1");
@@ -75,7 +77,7 @@ public class SchemaManagerTest {
         String failingName = UUID.randomUUID().toString();
         FailingFileIO.reset(failingName, 100, 100);
         String root = FailingFileIO.getFailingPath(failingName, tempDir.toString());
-        Path path = new Path(root);
+        path = new Path(root);
         manager = new SchemaManager(FileIOFinder.find(path), path);
     }
 
@@ -288,5 +290,27 @@ public class SchemaManagerTest {
                 .hasMessage(
                         "Cannot define any primary key in an append-only table. "
                                 + "Set 'write-mode'='change-log' if still want to keep the primary key definition.");
+    }
+
+    @Test
+    public void testDeleteSchemaWithSchemaId() throws Exception {
+        Map<String, String> options = new HashMap<>();
+        Schema schema =
+                new Schema(
+                        rowType.getFields(),
+                        partitionKeys,
+                        primaryKeys,
+                        options,
+                        "append-only table with primary key");
+        // use non-failing manager
+        SchemaManager manager = new SchemaManager(LocalFileIO.create(), path);
+        manager.createTable(schema);
+        String schemaContent = manager.latest().get().toString();
+
+        manager.commitChanges(SchemaChange.setOption("aa", "bb"));
+        assertThat(manager.latest().get().options().get("aa")).isEqualTo("bb");
+
+        manager.deleteSchema(manager.latest().get().id());
+        assertThat(manager.latest().get().toString()).isEqualTo(schemaContent);
     }
 }
