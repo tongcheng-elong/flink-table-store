@@ -246,11 +246,13 @@ public abstract class AbstractFileStoreWrite<T> implements FileStoreWrite<T> {
         if (LOG.isDebugEnabled()) {
             LOG.debug("Creating writer for partition {}, bucket {}", partition, bucket);
         }
+        final long start_ts = System.currentTimeMillis();
         WriterContainer<T> writerContainer =
                 overwrite
                         ? createEmptyWriterContainer(partition.copy(), bucket, compactExecutor())
                         : createWriterContainer(partition.copy(), bucket, compactExecutor());
         notifyNewWriter(writerContainer.writer);
+        LOG.info("Creating writer for partition {}, bucket {}, time {} ms", partition, bucket, System.currentTimeMillis() - start_ts);
         return writerContainer;
     }
 
