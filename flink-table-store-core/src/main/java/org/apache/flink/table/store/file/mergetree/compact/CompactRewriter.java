@@ -22,10 +22,11 @@ import org.apache.flink.table.store.file.compact.CompactResult;
 import org.apache.flink.table.store.file.io.DataFileMeta;
 import org.apache.flink.table.store.file.mergetree.SortedRun;
 
+import java.io.Closeable;
 import java.util.List;
 
 /** Rewrite sections to the files. */
-public interface CompactRewriter {
+public interface CompactRewriter extends Closeable {
 
     CompactResult rewrite(int outputLevel, boolean dropDelete, List<List<SortedRun>> sections)
             throws Exception;

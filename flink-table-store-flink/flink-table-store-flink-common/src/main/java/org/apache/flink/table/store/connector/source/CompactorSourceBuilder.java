@@ -28,11 +28,10 @@ import org.apache.flink.table.store.connector.LogicalTypeConversion;
 import org.apache.flink.table.store.file.predicate.Predicate;
 import org.apache.flink.table.store.file.predicate.PredicateBuilder;
 import org.apache.flink.table.store.table.FileStoreTable;
+import org.apache.flink.table.store.table.source.StreamDataTableScan;
 import org.apache.flink.table.store.table.source.snapshot.ContinuousCompactorFollowUpScanner;
 import org.apache.flink.table.store.table.source.snapshot.ContinuousCompactorStartingScanner;
-import org.apache.flink.table.store.table.source.snapshot.ContinuousDataFileSnapshotEnumerator;
 import org.apache.flink.table.store.table.source.snapshot.FullStartingScanner;
-import org.apache.flink.table.store.table.source.snapshot.StaticDataFileSnapshotEnumerator;
 import org.apache.flink.table.store.table.system.BucketsTable;
 import org.apache.flink.table.store.types.RowType;
 
@@ -98,27 +97,23 @@ public class CompactorSourceBuilder {
                     null,
                     partitionPredicate,
                     null,
-                    (table, scan, nextSnapshotId) ->
-                            new ContinuousDataFileSnapshotEnumerator(
-                                    table.fileIO(),
-                                    table.location(),
-                                    scan,
-                                    new ContinuousCompactorStartingScanner(),
-                                    new ContinuousCompactorFollowUpScanner(),
-                                    nextSnapshotId));
+                    (table, nextSnapshotId) -> {
+                        StreamDataTableScan scan =
+                                table.newStreamScan()
+                                        .withStartingScanner(
+                                                new ContinuousCompactorStartingScanner())
+                                        .withFollowUpScanner(
+                                                new ContinuousCompactorFollowUpScanner());
+                        scan.restore(nextSnapshotId);
+                        return scan;
+                    });
         } else {
             return new StaticFileStoreSource(
                     bucketsTable,
                     null,
                     partitionPredicate,
                     null,
-                    (table, scan) ->
-                            new StaticDataFileSnapshotEnumerator(
-                                    table.fileIO(),
-                                    table.location(),
-                                    scan,
-                                    // static compactor source will compact all current files
-                                    new FullStartingScanner()));
+                    table -> table.newScan().withStartingScanner(new FullStartingScanner()));
         }
     }
 

@@ -26,6 +26,7 @@ import org.apache.flink.table.store.file.io.KeyValueFileWriterFactory;
 import org.apache.flink.table.store.file.mergetree.SortedRun;
 import org.apache.flink.table.store.utils.Preconditions;
 
+import java.io.IOException;
 import java.util.Comparator;
 import java.util.List;
 
@@ -65,4 +66,7 @@ public class FullChangelogMergeTreeCompactRewriter extends ChangelogMergeTreeRew
     protected MergeFunctionWrapper<ChangelogResult> createMergeWrapper(int outputLevel) {
         return new FullChangelogMergeFunctionWrapper(mfFactory.create(), maxLevel);
     }
+
+    @Override
+    public void close() throws IOException {}
 }

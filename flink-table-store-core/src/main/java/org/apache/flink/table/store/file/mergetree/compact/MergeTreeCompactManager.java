@@ -31,6 +31,7 @@ import org.apache.flink.table.store.utils.Preconditions;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.IOException;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Optional;
@@ -102,7 +103,12 @@ public class MergeTreeCompactManager extends CompactFutureManager {
             }
             optionalUnit =
                     strategy.pick(levels.numberOfLevels(), runs)
-                            .map(unit -> unit.files().size() < 2 ? null : unit);
+                            .filter(unit -> unit.files().size() > 0)
+                            .filter(
+                                    unit ->
+                                            unit.files().size() > 1
+                                                    || unit.files().get(0).level()
+                                                            != unit.outputLevel());
         }
 
         optionalUnit.ifPresent(
@@ -179,5 +185,10 @@ public class MergeTreeCompactManager extends CompactFutureManager {
                     }
                 });
         return result;
+    }
+
+    @Override
+    public void close() throws IOException {
+        rewriter.close();
     }
 }
